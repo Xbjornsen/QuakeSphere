@@ -1,4 +1,4 @@
-package com.quakesphere.ui.globe
+package com.quakesphere.globe.internal
 
 /**
  * Compact Kotlin port of Mapbox's earcut.js (ISC licence).

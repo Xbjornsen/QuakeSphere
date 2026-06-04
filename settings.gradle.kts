@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "QuakeSphere"
 include(":app")
+include(":globe")

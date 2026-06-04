@@ -1,8 +1,8 @@
-package com.quakesphere.ui.globe
+package com.quakesphere.globe.internal
 
 import android.content.Context
 import com.google.gson.JsonParser
-import com.quakesphere.R
+import com.quakesphere.globe.R
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin

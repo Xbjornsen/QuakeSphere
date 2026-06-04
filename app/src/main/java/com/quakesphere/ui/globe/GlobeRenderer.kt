@@ -5,6 +5,7 @@ import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import com.quakesphere.domain.model.Earthquake
 import com.quakesphere.domain.model.EarthquakeSwarm
+import com.quakesphere.globe.internal.NaturalEarthLoader
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
