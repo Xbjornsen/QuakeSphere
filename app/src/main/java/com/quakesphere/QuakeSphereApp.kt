@@ -4,16 +4,15 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
+import com.quakesphere.ui.settings.SettingsViewModel
 import com.quakesphere.work.EarthquakeSyncWorker
 import dagger.hilt.android.HiltAndroidApp
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -21,6 +20,9 @@ class QuakeSphereApp : Application(), Configuration.Provider {
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
+    @Inject
+    lateinit var dataStore: DataStore<Preferences>
 
     override fun onCreate() {
         super.onCreate()
@@ -48,21 +50,11 @@ class QuakeSphereApp : Application(), Configuration.Provider {
     }
 
     private fun scheduleBackgroundSync() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        val syncRequest = PeriodicWorkRequestBuilder<EarthquakeSyncWorker>(
-            15, TimeUnit.MINUTES
-        )
-            .setConstraints(constraints)
-            .build()
-
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            EarthquakeSyncWorker.WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
-            syncRequest
-        )
+        // Read the persisted sync interval (defaults to 30 min) and schedule.
+        val minutes = runBlocking {
+            dataStore.data.first()[SettingsViewModel.KEY_SYNC_INTERVAL]?.toLong() ?: 30L
+        }
+        EarthquakeSyncWorker.schedule(this, minutes)
     }
 
     companion object {

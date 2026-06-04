@@ -7,6 +7,10 @@ import com.quakesphere.domain.model.Earthquake
 import com.quakesphere.domain.repository.EarthquakeRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,15 +21,24 @@ class EarthquakeRepositoryImpl @Inject constructor(
     private val dao: EarthquakeDao
 ) : EarthquakeRepository {
 
-    override fun getEarthquakes(minMagnitude: Double): Flow<List<Earthquake>> {
-        return dao.getAllByMinMagnitude(minMagnitude).map { entities ->
+    override fun getEarthquakes(minMagnitude: Double, sinceTime: Long): Flow<List<Earthquake>> {
+        return dao.getFiltered(minMagnitude, sinceTime).map { entities ->
             entities.map { it.toDomain() }
         }
     }
 
-    override suspend fun syncEarthquakes(minMagnitude: Double): Result<Int> {
+    override suspend fun syncEarthquakes(minMagnitude: Double, sinceTime: Long): Result<Int> {
         return try {
-            val response = apiService.getEarthquakes(minMagnitude = minMagnitude, limit = 200)
+            val startTimeIso = if (sinceTime > 0L) {
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+                    .apply { timeZone = TimeZone.getTimeZone("UTC") }
+                    .format(Date(sinceTime))
+            } else null
+            val response = apiService.getEarthquakes(
+                minMagnitude = minMagnitude,
+                startTime    = startTimeIso,
+                limit        = 200
+            )
             val entities = response.features.mapNotNull { feature ->
                 val coords = feature.geometry.coordinates
                 if (coords.size >= 3) {

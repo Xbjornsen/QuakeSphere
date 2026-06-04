@@ -15,7 +15,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,6 +32,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.SnackbarHost
@@ -62,7 +66,6 @@ import com.quakesphere.ui.theme.MagStrong
 import com.quakesphere.ui.theme.SurfaceCard
 import com.quakesphere.ui.theme.TextPrimary
 import com.quakesphere.ui.theme.TextSecondary
-import androidx.compose.material3.ExperimentalMaterial3Api
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -95,30 +98,34 @@ fun GlobeScreen(
         AndroidView(
             factory = { context ->
                 GlobeView(context).apply {
-                    onEarthquakeTapped = { index ->
-                        viewModel.selectEarthquake(index)
-                    }
+                    onEarthquakeTapped = { index -> viewModel.selectEarthquake(index) }
                 }
             },
             update = { view ->
                 view.renderer.updateEarthquakes(uiState.earthquakes)
+                view.renderer.updateSwarms(uiState.swarms)
+                view.showContinentLines     = uiState.displaySettings.showContinentLines
+                view.showStars              = uiState.displaySettings.showStars
+                view.autoRotate             = uiState.displaySettings.autoRotate
+                view.markerColorByMagnitude = uiState.displaySettings.markerColorByMagnitude
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Top bar overlay
-        Column(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            // Top row
+        // ── Overlay column (header + legend) ─────────────────────────────────
+        Column(modifier = Modifier.fillMaxSize()) {
+
+            // ── App header (status-bar-aware) ─────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .statusBarsPadding()                          // ← fixes OnePlus 15 cut-off
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Title
+                // Title block
                 Column {
                     Text(
                         text = "QuakeSphere",
@@ -126,21 +133,36 @@ fun GlobeScreen(
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        text = "${uiState.earthquakes.size} quakes tracked",
-                        color = TextSecondary,
-                        fontSize = 12.sp
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${uiState.earthquakes.size} quakes",
+                            color = TextSecondary,
+                            fontSize = 12.sp
+                        )
+                        if (uiState.swarms.isNotEmpty()) {
+                            Text(text = "·", color = TextSecondary, fontSize = 12.sp)
+                            Text(
+                                text = "${uiState.swarms.size} swarm${if (uiState.swarms.size > 1) "s" else ""}",
+                                color = Color(0xFFFFBB33),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
                 }
 
+                // Action buttons
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (uiState.isLoading) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = ElectricBlue,
+                            modifier  = Modifier.size(20.dp),
+                            color     = ElectricBlue,
                             strokeWidth = 2.dp
                         )
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(6.dp))
                     }
                     IconButton(onClick = { viewModel.syncEarthquakes() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = ElectricBlue)
@@ -149,7 +171,7 @@ fun GlobeScreen(
                         if (uiState.earthquakes.isNotEmpty()) {
                             Badge(containerColor = MagStrong) {
                                 Text(
-                                    text = uiState.earthquakes.size.toString(),
+                                    text  = uiState.earthquakes.size.toString(),
                                     color = Color.White,
                                     fontSize = 10.sp
                                 )
@@ -166,59 +188,112 @@ fun GlobeScreen(
                 }
             }
 
+            // ── North indicator ───────────────────────────────────────────
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                PoleLabel("N", Color(0xFFCCE8FF))
+            }
+
             Spacer(Modifier.weight(1f))
 
-            // Magnitude legend
+            // ── South indicator ───────────────────────────────────────────
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                PoleLabel("S", Color(0xFFAAD4FF))
+            }
+
+            // ── Legend ───────────────────────────────────────────────────────
             MagnitudeLegend(
+                colorByMagnitude = uiState.displaySettings.markerColorByMagnitude,
                 modifier = Modifier
                     .align(Alignment.Start)
-                    .padding(start = 12.dp, bottom = if (uiState.selectedEarthquake != null) 220.dp else 16.dp)
+                    .padding(
+                        start  = 12.dp,
+                        bottom = if (uiState.selectedEarthquake != null) 220.dp else 16.dp
+                    )
             )
         }
 
-        // Bottom sheet for selected earthquake
+        // ── Selected earthquake bottom sheet ─────────────────────────────────
         AnimatedVisibility(
             visible = uiState.selectedEarthquake != null,
-            enter = slideInVertically(initialOffsetY = { it }),
-            exit = slideOutVertically(targetOffsetY = { it }),
+            enter   = slideInVertically(initialOffsetY = { it }),
+            exit    = slideOutVertically(targetOffsetY = { it }),
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
             uiState.selectedEarthquake?.let { quake ->
                 SelectedEarthquakeCard(
-                    earthquake = quake,
+                    earthquake  = quake,
+                    useMiles    = uiState.displaySettings.useMiles,
                     onViewDetails = { onNavigateToDetail(quake.id) },
-                    onDismiss = { viewModel.clearSelection() },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    onDismiss   = { viewModel.clearSelection() },
+                    modifier    = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
         }
 
         SnackbarHost(
             hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter)
+            modifier  = Modifier.align(Alignment.BottomCenter)
         )
     }
 }
 
+// ── Legend ─────────────────────────────────────────────────────────────────
+
 @Composable
-fun MagnitudeLegend(modifier: Modifier = Modifier) {
+fun MagnitudeLegend(
+    colorByMagnitude: Boolean,
+    modifier: Modifier = Modifier
+) {
     Card(
         modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f)),
-        shape = RoundedCornerShape(8.dp)
+        colors   = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.70f)),
+        shape    = RoundedCornerShape(8.dp)
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
-            Text(
-                text = "DEPTH",
-                color = TextSecondary,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(4.dp))
-            LegendItem(color = DepthShallow, label = "Shallow <70km")
-            LegendItem(color = DepthIntermediate, label = "Mid 70-300km")
-            LegendItem(color = DepthDeep, label = "Deep >300km")
+            if (colorByMagnitude) {
+                Text("MAGNITUDE", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                LegendItem(color = MagMinor,    label = "< M5   Minor")
+                LegendItem(color = MagModerate, label = "M5-6  Moderate")
+                LegendItem(color = MagStrong,   label = "M6-7  Strong")
+                LegendItem(color = MagMajor,    label = "M7-8  Major")
+                LegendItem(color = MagGreat,    label = "M8+   Great")
+            } else {
+                Text("DEPTH", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                LegendItem(color = DepthShallow,      label = "Shallow  <70 km")
+                LegendItem(color = DepthIntermediate, label = "Mid  70-300 km")
+                LegendItem(color = DepthDeep,         label = "Deep  >300 km")
+            }
         }
+    }
+}
+
+@Composable
+fun PoleLabel(label: String, tint: Color) {
+    Box(
+        modifier = Modifier
+            .background(Color.Black.copy(alpha = 0.50f), CircleShape)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text       = label,
+            color      = tint,
+            fontSize   = 13.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 2.sp
+        )
     }
 }
 
@@ -228,28 +303,26 @@ fun LegendItem(color: Color, label: String) {
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(vertical = 2.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(color)
-        )
+        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(6.dp))
         Text(text = label, color = TextPrimary, fontSize = 11.sp)
     }
 }
 
+// ── Selected earthquake card ────────────────────────────────────────────────
+
 @Composable
 fun SelectedEarthquakeCard(
     earthquake: Earthquake,
+    useMiles: Boolean,
     onViewDetails: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = SurfaceCard),
-        shape = RoundedCornerShape(16.dp),
+        modifier  = modifier.fillMaxWidth(),
+        colors    = CardDefaults.cardColors(containerColor = SurfaceCard),
+        shape     = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(8.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -263,25 +336,23 @@ fun SelectedEarthquakeCard(
                     Spacer(Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = earthquake.place,
-                            color = TextPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.sp
+                            text         = earthquake.place,
+                            color        = TextPrimary,
+                            fontWeight   = FontWeight.SemiBold,
+                            fontSize     = 15.sp
                         )
                         Text(
-                            text = formatTimeAgo(earthquake.time),
-                            color = TextSecondary,
+                            text     = formatTimeAgo(earthquake.time),
+                            color    = TextSecondary,
                             fontSize = 12.sp
                         )
                     }
                 }
                 Text(
-                    text = "✕",
-                    color = TextSecondary,
+                    text     = "✕",
+                    color    = TextSecondary,
                     fontSize = 18.sp,
-                    modifier = Modifier
-                        .clickable { onDismiss() }
-                        .padding(4.dp)
+                    modifier = Modifier.clickable { onDismiss() }.padding(4.dp)
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -291,16 +362,16 @@ fun SelectedEarthquakeCard(
             ) {
                 InfoChip(
                     label = "Depth",
-                    value = "${earthquake.depth.toInt()} km",
+                    value = formatDepth(earthquake.depth, useMiles),
                     color = when (earthquake.depthCategory) {
-                        DepthCategory.SHALLOW -> DepthShallow
+                        DepthCategory.SHALLOW      -> DepthShallow
                         DepthCategory.INTERMEDIATE -> DepthIntermediate
-                        DepthCategory.DEEP -> DepthDeep
+                        DepthCategory.DEEP         -> DepthDeep
                     }
                 )
                 InfoChip(
-                    label = "Coordinates",
-                    value = "${String.format("%.2f", earthquake.lat)}°, ${String.format("%.2f", earthquake.lon)}°",
+                    label = "Coords",
+                    value = "${String.format("%.1f", earthquake.lat)}°, ${String.format("%.1f", earthquake.lon)}°",
                     color = ElectricBlue
                 )
                 if (earthquake.tsunami == 1) {
@@ -309,9 +380,9 @@ fun SelectedEarthquakeCard(
             }
             Spacer(Modifier.height(12.dp))
             Button(
-                onClick = onViewDetails,
+                onClick  = onViewDetails,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
+                colors   = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
             ) {
                 Text("View Full Details", color = Color.White)
             }
@@ -321,19 +392,18 @@ fun SelectedEarthquakeCard(
 
 @Composable
 fun MagnitudeBadgeLarge(magnitude: Double) {
-    val color = magnitudeColor(magnitude)
     Box(
         modifier = Modifier
             .size(52.dp)
             .clip(CircleShape)
-            .background(color),
+            .background(magnitudeColor(magnitude)),
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = String.format("%.1f", magnitude),
-            color = Color.White,
+            text       = String.format("%.1f", magnitude),
+            color      = magnitudeTextColor(magnitude),
             fontWeight = FontWeight.Bold,
-            fontSize = 16.sp
+            fontSize   = 16.sp
         )
     }
 }
@@ -346,28 +416,70 @@ fun InfoChip(label: String, value: String, color: Color) {
     }
 }
 
-fun magnitudeColor(mag: Double): Color {
-    return when {
-        mag < 5.0 -> MagMinor
-        mag < 6.0 -> MagModerate
-        mag < 7.0 -> MagStrong
-        mag < 8.0 -> MagMajor
-        else -> MagGreat
-    }
+// ── Label projection ─────────────────────────────────────────────────────────
+
+/**
+ * Projects a lat/lon point on the globe into screen-pixel coordinates.
+ * Returns null if the point is behind the camera or off-screen.
+ */
+fun projectToScreen(
+    lat: Float, lon: Float,
+    mvp: FloatArray,
+    screenW: Float, screenH: Float
+): Pair<Float, Float>? {
+    val latR = Math.toRadians(lat.toDouble()).toFloat()
+    val lonR = Math.toRadians(lon.toDouble()).toFloat()
+    val r = 1.05f  // slightly above surface so labels don't clip into the globe
+    val x = r * kotlin.math.cos(latR) * kotlin.math.cos(lonR)
+    val y = r * kotlin.math.sin(latR)
+    val z = r * kotlin.math.cos(latR) * kotlin.math.sin(lonR)
+
+    // Clip space: mvp * vec4(x,y,z,1)
+    val cx = mvp[0]*x + mvp[4]*y + mvp[8]*z  + mvp[12]
+    val cy = mvp[1]*x + mvp[5]*y + mvp[9]*z  + mvp[13]
+    val cw = mvp[3]*x + mvp[7]*y + mvp[11]*z + mvp[15]
+    if (cw <= 0.01f) return null   // behind camera
+
+    val ndcX =  cx / cw
+    val ndcY =  cy / cw
+    if (ndcX < -0.92f || ndcX > 0.92f || ndcY < -0.92f || ndcY > 0.92f) return null
+
+    val sx = (ndcX + 1f) / 2f * screenW
+    val sy = (1f - ndcY) / 2f * screenH
+    return Pair(sx, sy)
 }
 
+// ── Shared utilities ────────────────────────────────────────────────────────
+
+fun magnitudeColor(mag: Double): Color = when {
+    mag < 5.0 -> MagMinor
+    mag < 6.0 -> MagModerate
+    mag < 7.0 -> MagStrong
+    mag < 8.0 -> MagMajor
+    else       -> MagGreat
+}
+
+/**
+ * Readable text colour for a filled magnitude badge.
+ * Green (minor) and yellow (moderate) backgrounds are light → need dark text;
+ * orange/red backgrounds are dark enough for white text.
+ */
+fun magnitudeTextColor(mag: Double): Color =
+    if (mag < 6.0) Color(0xFF10151F) else Color.White
+
+/** Formats a depth (always stored in km) honouring the user's distance-unit setting. */
+fun formatDepth(depthKm: Double, useMiles: Boolean): String =
+    if (useMiles) "${(depthKm * 0.621371).toInt()} mi" else "${depthKm.toInt()} km"
+
 fun formatTimeAgo(timestamp: Long): String {
-    val diff = System.currentTimeMillis() - timestamp
+    val diff    = System.currentTimeMillis() - timestamp
     val minutes = TimeUnit.MILLISECONDS.toMinutes(diff)
-    val hours = TimeUnit.MILLISECONDS.toHours(diff)
-    val days = TimeUnit.MILLISECONDS.toDays(diff)
+    val hours   = TimeUnit.MILLISECONDS.toHours(diff)
+    val days    = TimeUnit.MILLISECONDS.toDays(diff)
     return when {
         minutes < 60 -> "${minutes}m ago"
-        hours < 24 -> "${hours}h ago"
-        days < 7 -> "${days}d ago"
-        else -> {
-            val sdf = SimpleDateFormat("MMM dd", Locale.getDefault())
-            sdf.format(Date(timestamp))
-        }
+        hours   < 24 -> "${hours}h ago"
+        days    <  7 -> "${days}d ago"
+        else         -> SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(timestamp))
     }
 }

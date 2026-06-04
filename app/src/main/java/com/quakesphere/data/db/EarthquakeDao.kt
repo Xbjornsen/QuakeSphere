@@ -15,6 +15,9 @@ interface EarthquakeDao {
     @Query("SELECT * FROM earthquakes WHERE mag >= :minMag ORDER BY time DESC")
     fun getAllByMinMagnitude(minMag: Double): Flow<List<EarthquakeEntity>>
 
+    @Query("SELECT * FROM earthquakes WHERE mag >= :minMag AND time >= :sinceTime ORDER BY time DESC")
+    fun getFiltered(minMag: Double, sinceTime: Long): Flow<List<EarthquakeEntity>>
+
     @Query("SELECT * FROM earthquakes ORDER BY time DESC LIMIT 1")
     suspend fun getLatest(): EarthquakeEntity?
 

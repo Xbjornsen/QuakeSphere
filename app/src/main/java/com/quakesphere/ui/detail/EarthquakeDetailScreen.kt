@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.quakesphere.domain.model.DepthCategory
 import com.quakesphere.domain.model.Earthquake
+import com.quakesphere.ui.globe.formatDepth
 import com.quakesphere.ui.globe.magnitudeColor
 import com.quakesphere.ui.theme.DepthDeep
 import com.quakesphere.ui.theme.DepthIntermediate
@@ -109,6 +110,7 @@ fun EarthquakeDetailScreen(
                 uiState.earthquake?.let { quake ->
                     EarthquakeDetailContent(
                         earthquake = quake,
+                        useMiles   = uiState.useMiles,
                         modifier = Modifier.padding(padding)
                     )
                 }
@@ -120,6 +122,7 @@ fun EarthquakeDetailScreen(
 @Composable
 fun EarthquakeDetailContent(
     earthquake: Earthquake,
+    useMiles: Boolean,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -224,7 +227,7 @@ fun EarthquakeDetailContent(
 
                 Column {
                     Text(
-                        text = "${earthquake.depth.toInt()} km",
+                        text = formatDepth(earthquake.depth, useMiles),
                         color = depthColor,
                         fontWeight = FontWeight.Bold,
                         fontSize = 28.sp

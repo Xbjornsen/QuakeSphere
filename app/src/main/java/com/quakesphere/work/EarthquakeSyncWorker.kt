@@ -6,9 +6,15 @@ import androidx.core.content.ContextCompat
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.hilt.work.HiltWorker
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.quakesphere.domain.repository.EarthquakeRepository
+import java.util.concurrent.TimeUnit
 import com.quakesphere.notification.EarthquakeNotificationManager
 import com.quakesphere.ui.settings.SettingsViewModel
 import dagger.assisted.Assisted
@@ -74,5 +80,27 @@ class EarthquakeSyncWorker @AssistedInject constructor(
 
     companion object {
         const val WORK_NAME = "earthquake_sync_work"
+
+        /**
+         * Enqueues (or updates) the unique periodic sync with the given interval.
+         * WorkManager enforces a 15-minute minimum, so smaller values are clamped.
+         */
+        fun schedule(context: Context, intervalMinutes: Long) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            val request = PeriodicWorkRequestBuilder<EarthquakeSyncWorker>(
+                intervalMinutes.coerceAtLeast(15), TimeUnit.MINUTES
+            )
+                .setConstraints(constraints)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                WORK_NAME,
+                ExistingPeriodicWorkPolicy.UPDATE,
+                request
+            )
+        }
     }
 }

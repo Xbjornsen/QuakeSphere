@@ -8,7 +8,7 @@ import javax.inject.Inject
 class GetEarthquakesUseCase @Inject constructor(
     private val repository: EarthquakeRepository
 ) {
-    operator fun invoke(minMagnitude: Double = 5.0): Flow<List<Earthquake>> {
-        return repository.getEarthquakes(minMagnitude)
+    operator fun invoke(minMagnitude: Double = 5.0, sinceTime: Long = 0L): Flow<List<Earthquake>> {
+        return repository.getEarthquakes(minMagnitude, sinceTime)
     }
 }

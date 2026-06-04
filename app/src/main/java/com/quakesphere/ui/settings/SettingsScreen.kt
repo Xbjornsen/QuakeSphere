@@ -1,5 +1,6 @@
 package com.quakesphere.ui.settings
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,10 +16,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -53,7 +54,7 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val s by viewModel.uiState.collectAsState()
 
     Scaffold(
         topBar = {
@@ -61,11 +62,7 @@ fun SettingsScreen(
                 title = { Text("Settings", color = TextPrimary, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = TextPrimary
-                        )
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = SpaceBlack)
@@ -81,177 +78,208 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Filter settings
-            SettingsSectionCard(title = "Earthquake Filter") {
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Minimum Magnitude", color = TextPrimary, fontSize = 15.sp)
-                        Text(
-                            text = String.format("M %.1f", uiState.minMagnitude),
-                            color = ElectricBlue,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
+
+            // ── DATA FILTERS ─────────────────────────────────────────────────
+            SettingsSection("Data Filters") {
+                // Minimum magnitude
+                SettingRow(
+                    title    = "Minimum Magnitude",
+                    subtitle = "Show earthquakes at or above this level",
+                    trailing = { Text("M ${String.format("%.1f", s.minMagnitude)}",
+                        color = ElectricBlue, fontWeight = FontWeight.Bold) }
+                )
+                Slider(
+                    value         = s.minMagnitude,
+                    onValueChange = { viewModel.setMinMagnitude(it) },
+                    valueRange    = 2.5f..8.0f,
+                    steps         = 10,
+                    colors        = SliderDefaults.colors(
+                        thumbColor        = ElectricBlue,
+                        activeTrackColor  = ElectricBlue,
+                        inactiveTrackColor = SurfaceVariant
+                    )
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("M 2.5", color = TextSecondary, fontSize = 11.sp)
+                    Text("M 8.0", color = TextSecondary, fontSize = 11.sp)
+                }
+
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = SurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+
+                // Time range
+                Text("Time Range", color = TextPrimary, fontSize = 15.sp)
+                Text("Fetch earthquakes from the past…", color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                ChipRow {
+                    TimeRange.values().forEach { tr ->
+                        SettingsChip(
+                            label    = tr.label,
+                            selected = s.timeRange == tr,
+                            onClick  = { viewModel.setTimeRange(tr) }
                         )
                     }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Only show earthquakes above this magnitude",
-                        color = TextSecondary,
-                        fontSize = 12.sp
+                }
+
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = SurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+
+                // Depth filter
+                Text("Depth Filter", color = TextPrimary, fontSize = 15.sp)
+                Text("Limit by earthquake focal depth", color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                ChipRow {
+                    DepthFilter.values().forEach { df ->
+                        SettingsChip(
+                            label    = df.label,
+                            selected = s.depthFilter == df,
+                            onClick  = { viewModel.setDepthFilter(df) }
+                        )
+                    }
+                }
+            }
+
+            // ── GLOBE DISPLAY ────────────────────────────────────────────────
+            SettingsSection("Globe Display") {
+                ToggleRow(
+                    title    = "Continent Lines",
+                    subtitle = "Overlay simplified coastlines on the globe",
+                    checked  = s.showContinentLines,
+                    onCheckedChange = { viewModel.setShowContinentLines(it) }
+                )
+                HorizontalDivider(color = SurfaceVariant)
+                ToggleRow(
+                    title    = "Starfield",
+                    subtitle = "Show the star background behind the globe",
+                    checked  = s.showStars,
+                    onCheckedChange = { viewModel.setShowStars(it) }
+                )
+                HorizontalDivider(color = SurfaceVariant)
+                ToggleRow(
+                    title    = "Auto-Rotate",
+                    subtitle = "Slowly spin the globe automatically",
+                    checked  = s.autoRotate,
+                    onCheckedChange = { viewModel.setAutoRotate(it) }
+                )
+                HorizontalDivider(color = SurfaceVariant)
+                Spacer(Modifier.height(4.dp))
+                Text("Marker Colour Mode", color = TextPrimary, fontSize = 15.sp)
+                Text("What property drives dot colour", color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                ChipRow {
+                    MarkerColorMode.values().forEach { mode ->
+                        SettingsChip(
+                            label    = mode.label,
+                            selected = s.markerColorMode == mode,
+                            onClick  = { viewModel.setMarkerColorMode(mode) }
+                        )
+                    }
+                }
+            }
+
+            // ── NOTIFICATIONS ────────────────────────────────────────────────
+            SettingsSection("Notifications") {
+                ToggleRow(
+                    title    = "Enable Notifications",
+                    subtitle = "Get alerted when major quakes occur",
+                    checked  = s.notificationsEnabled,
+                    onCheckedChange = { viewModel.setNotificationsEnabled(it) }
+                )
+                if (s.notificationsEnabled) {
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider(color = SurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    SettingRow(
+                        title    = "Alert Threshold",
+                        subtitle = "Notify when magnitude exceeds this value",
+                        trailing = {
+                            Text("M ${String.format("%.1f", s.notificationThreshold)}",
+                                color = MagStrong, fontWeight = FontWeight.Bold)
+                        }
                     )
                     Slider(
-                        value = uiState.minMagnitude,
-                        onValueChange = { viewModel.setMinMagnitude(it) },
-                        valueRange = 4.0f..8.0f,
-                        steps = 7,
-                        colors = SliderDefaults.colors(
-                            thumbColor = ElectricBlue,
-                            activeTrackColor = ElectricBlue,
+                        value         = s.notificationThreshold,
+                        onValueChange = { viewModel.setNotificationThreshold(it) },
+                        valueRange    = 5.0f..8.0f,
+                        steps         = 5,
+                        colors        = SliderDefaults.colors(
+                            thumbColor        = MagStrong,
+                            activeTrackColor  = MagStrong,
                             inactiveTrackColor = SurfaceVariant
                         )
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("M 4.0", color = TextSecondary, fontSize = 11.sp)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("M 5.0", color = TextSecondary, fontSize = 11.sp)
                         Text("M 8.0", color = TextSecondary, fontSize = 11.sp)
                     }
                 }
             }
 
-            // Notification settings
-            SettingsSectionCard(title = "Notifications") {
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("Enable Notifications", color = TextPrimary, fontSize = 15.sp)
-                            Text(
-                                "Get alerted when major quakes occur",
-                                color = TextSecondary,
-                                fontSize = 12.sp
-                            )
-                        }
-                        Switch(
-                            checked = uiState.notificationsEnabled,
-                            onCheckedChange = { viewModel.setNotificationsEnabled(it) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = ElectricBlue,
-                                uncheckedThumbColor = TextSecondary,
-                                uncheckedTrackColor = SurfaceVariant
-                            )
+            // ── SWARMS ───────────────────────────────────────────────────────
+            SettingsSection("Swarm Detection") {
+                Text("Minimum Events", color = TextPrimary, fontSize = 15.sp)
+                Text("How many quakes in a cluster to flag as a swarm",
+                    color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                ChipRow {
+                    listOf(3, 5, 10).forEach { n ->
+                        SettingsChip(
+                            label    = "$n events",
+                            selected = s.swarmMinEvents == n,
+                            onClick  = { viewModel.setSwarmMinEvents(n) }
                         )
-                    }
-
-                    if (uiState.notificationsEnabled) {
-                        Spacer(Modifier.height(12.dp))
-                        HorizontalDivider(color = SurfaceVariant)
-                        Spacer(Modifier.height(12.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Notification Threshold", color = TextPrimary, fontSize = 15.sp)
-                            Text(
-                                text = String.format("M %.1f", uiState.notificationThreshold),
-                                color = MagStrong,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            )
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "Notify when magnitude exceeds this value",
-                            color = TextSecondary,
-                            fontSize = 12.sp
-                        )
-                        Slider(
-                            value = uiState.notificationThreshold,
-                            onValueChange = { viewModel.setNotificationThreshold(it) },
-                            valueRange = 5.0f..8.0f,
-                            steps = 5,
-                            colors = SliderDefaults.colors(
-                                thumbColor = MagStrong,
-                                activeTrackColor = MagStrong,
-                                inactiveTrackColor = SurfaceVariant
-                            )
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("M 5.0", color = TextSecondary, fontSize = 11.sp)
-                            Text("M 8.0", color = TextSecondary, fontSize = 11.sp)
-                        }
                     }
                 }
             }
 
-            // Sync interval settings
-            SettingsSectionCard(title = "Sync Interval") {
-                Column {
-                    Text(
-                        text = "How often to check for new earthquakes",
-                        color = TextSecondary,
-                        fontSize = 12.sp
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        SyncInterval.values().forEach { interval ->
-                            FilterChip(
-                                selected = uiState.syncInterval == interval,
-                                onClick = { viewModel.setSyncInterval(interval) },
-                                label = {
-                                    Text(
-                                        text = interval.label,
-                                        color = if (uiState.syncInterval == interval) Color.White else TextSecondary,
-                                        fontSize = 13.sp
-                                    )
-                                },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = ElectricBlue,
-                                    containerColor = SurfaceVariant
-                                ),
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+            // ── UNITS ────────────────────────────────────────────────────────
+            SettingsSection("Units") {
+                Text("Distance", color = TextPrimary, fontSize = 15.sp)
+                Text("Used for depth values throughout the app",
+                    color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                ChipRow {
+                    DistanceUnit.values().forEach { u ->
+                        SettingsChip(
+                            label    = u.label,
+                            selected = s.distanceUnit == u,
+                            onClick  = { viewModel.setDistanceUnit(u) }
+                        )
                     }
                 }
             }
 
-            // Info card
+            // ── SYNC ─────────────────────────────────────────────────────────
+            SettingsSection("Background Sync") {
+                Text("How often to check for new earthquakes",
+                    color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                ChipRow {
+                    SyncInterval.values().forEach { interval ->
+                        SettingsChip(
+                            label    = interval.label,
+                            selected = s.syncInterval == interval,
+                            onClick  = { viewModel.setSyncInterval(interval) }
+                        )
+                    }
+                }
+            }
+
+            // ── Data source info ─────────────────────────────────────────────
             Card(
                 colors = CardDefaults.cardColors(containerColor = SurfaceVariant),
-                shape = RoundedCornerShape(12.dp)
+                shape  = RoundedCornerShape(12.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    Text("DATA SOURCE", color = ElectricBlue, fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                    Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "DATA SOURCE",
-                        color = ElectricBlue,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.5.sp
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "QuakeSphere uses live data from the USGS Earthquake Hazards Program. Data is updated in near real-time and covers global seismic events.",
-                        color = TextSecondary,
-                        fontSize = 13.sp,
-                        lineHeight = 20.sp
+                        "QuakeSphere uses live data from the USGS Earthquake Hazards Program. " +
+                        "Data is updated in near real-time and covers global seismic events.",
+                        color = TextSecondary, fontSize = 13.sp, lineHeight = 20.sp
                     )
                 }
             }
@@ -261,25 +289,102 @@ fun SettingsScreen(
     }
 }
 
+// ── Reusable components ───────────────────────────────────────────────────────
+
 @Composable
-fun SettingsSectionCard(
-    title: String,
-    content: @Composable () -> Unit
-) {
+private fun SettingsSection(title: String, content: @Composable () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = SurfaceCard),
-        shape = RoundedCornerShape(12.dp)
+        shape  = RoundedCornerShape(12.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = title.uppercase(),
-                color = ElectricBlue,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
+                text         = title.uppercase(),
+                color        = ElectricBlue,
+                fontSize     = 11.sp,
+                fontWeight   = FontWeight.Bold,
                 letterSpacing = 1.5.sp
             )
             Spacer(Modifier.height(12.dp))
             content()
         }
     }
+}
+
+@Composable
+private fun ToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier          = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(title,    color = TextPrimary,   fontSize = 15.sp)
+            Text(subtitle, color = TextSecondary, fontSize = 12.sp)
+        }
+        Switch(
+            checked         = checked,
+            onCheckedChange = onCheckedChange,
+            colors          = SwitchDefaults.colors(
+                checkedThumbColor   = Color.White,
+                checkedTrackColor   = ElectricBlue,
+                uncheckedThumbColor = TextSecondary,
+                uncheckedTrackColor = SurfaceVariant
+            )
+        )
+    }
+}
+
+@Composable
+private fun SettingRow(
+    title: String,
+    subtitle: String,
+    trailing: @Composable () -> Unit
+) {
+    Row(
+        modifier          = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(title,    color = TextPrimary,   fontSize = 15.sp)
+            Text(subtitle, color = TextSecondary, fontSize = 12.sp)
+        }
+        trailing()
+    }
+}
+
+@Composable
+private fun ChipRow(content: @Composable () -> Unit) {
+    Row(
+        modifier              = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment     = Alignment.CenterVertically
+    ) { content() }
+}
+
+@Composable
+private fun SettingsChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick  = onClick,
+        label    = {
+            Text(
+                text     = label,
+                color    = if (selected) Color.White else TextSecondary,
+                fontSize = 13.sp
+            )
+        },
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = ElectricBlue,
+            containerColor         = SurfaceVariant
+        )
+    )
 }
