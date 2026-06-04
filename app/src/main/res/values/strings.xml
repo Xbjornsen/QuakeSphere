@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">QuakeSphere</string>
+    <string name="globe_screen_title">QuakeSphere</string>
+    <string name="list_screen_title">Earthquake List</string>
+    <string name="detail_screen_title">Earthquake Details</string>
+    <string name="settings_screen_title">Settings</string>
+    <string name="notification_channel_name">Earthquake Alerts</string>
+    <string name="notification_channel_desc">Notifications for significant earthquake events</string>
+    <string name="sync_work_name">earthquake_sync_work</string>
+    <string name="loading">Loading…</string>
+    <string name="no_earthquakes">No earthquakes found</string>
+    <string name="pull_to_refresh">Pull down to refresh</string>
+    <string name="view_on_usgs">View on USGS Website</string>
+    <string name="tsunami_warning">TSUNAMI WARNING</string>
+    <string name="depth_shallow">Shallow</string>
+    <string name="depth_intermediate">Intermediate</string>
+    <string name="depth_deep">Deep</string>
+    <string name="mag_minor">Minor</string>
+    <string name="mag_moderate">Moderate</string>
+    <string name="mag_strong">Strong</string>
+    <string name="mag_major">Major</string>
+    <string name="mag_great">Great</string>
+    <string name="settings_min_mag">Minimum Magnitude</string>
+    <string name="settings_notification_threshold">Notification Threshold</string>
+    <string name="settings_notifications_enabled">Enable Notifications</string>
+    <string name="settings_sync_interval">Sync Interval</string>
+    <string name="data_source_info">QuakeSphere uses live data from the USGS Earthquake Hazards Program. Data is updated in near real-time and covers global seismic events.</string>
+</resources>

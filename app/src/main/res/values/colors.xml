@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Space / Dark theme -->
+    <color name="space_black">#FF050810</color>
+    <color name="deep_navy">#FF0A1628</color>
+    <color name="navy_blue">#FF0F2044</color>
+    <color name="dark_slate">#FF1A2740</color>
+
+    <!-- Electric blues -->
+    <color name="electric_blue">#FF0088FF</color>
+    <color name="cyan_blue">#FF00CCFF</color>
+    <color name="light_blue">#FF66AAFF</color>
+    <color name="pale_blue">#FFAADDFF</color>
+
+    <!-- Magnitude severity -->
+    <color name="mag_minor">#FF4CAF50</color>
+    <color name="mag_moderate">#FFFFEB3B</color>
+    <color name="mag_strong">#FFFF9800</color>
+    <color name="mag_major">#FFFF5722</color>
+    <color name="mag_great">#FFFF1744</color>
+
+    <!-- Depth colors -->
+    <color name="depth_shallow">#FFFF4444</color>
+    <color name="depth_intermediate">#FFFF8800</color>
+    <color name="depth_deep">#FF4488FF</color>
+
+    <!-- Surfaces -->
+    <color name="surface_dark">#FF111827</color>
+    <color name="surface_variant">#FF1F2937</color>
+    <color name="surface_card">#FF1A2436</color>
+
+    <!-- Text -->
+    <color name="text_primary">#FFF0F4FF</color>
+    <color name="text_secondary">#FF8899BB</color>
+    <color name="text_muted">#FF4A5568</color>
+
+    <!-- Accents -->
+    <color name="accent_teal">#FF00BCD4</color>
+    <color name="accent_purple">#FF7C3AED</color>
+    <color name="tsunami_warning">#FFFF6600</color>
+</resources>
