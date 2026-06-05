@@ -76,6 +76,10 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     private var continentFillBuffer: FloatBuffer? = null
     private var continentFillVertexCount = 0
 
+    // ── Tectonic plates ──────────────────────────────────────────────────────
+    private var plateLineBuffer: FloatBuffer? = null
+    private var plateLineVertexCount = 0
+
     @Volatile var lastMvpMatrix: FloatArray = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
 
     // ── Markers (the flat marker layer) ──────────────────────────────────────
@@ -85,6 +89,7 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
 
     // ── Marker stacks (radial spines, e.g. swarms) ───────────────────────────
     @Volatile private var stacks: List<MarkerStack> = emptyList()
+    @Volatile private var stackPositions: List<FloatArray> = emptyList()
 
     // ── Ripples (animated expanding rings) ───────────────────────────────────
     @Volatile private var ripples: List<RippleSpec> = emptyList()
@@ -93,6 +98,7 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     @Volatile var showContinentLines = true
     @Volatile var showStars          = true
     @Volatile var autoRotate         = false
+    @Volatile var showTectonicPlates = false
 
     // ── Interaction tracking (used to pause auto-rotate after touches) ───────
     @Volatile private var lastInteractionMs = 0L
@@ -100,6 +106,7 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
 
     // ── Tap callback ─────────────────────────────────────────────────────────
     var onMarkerTapped: ((Marker) -> Unit)? = null
+    var onStackTapped:  ((MarkerStack) -> Unit)? = null
 
     // ── Viewport ─────────────────────────────────────────────────────────────
     private var viewportWidth  = 1
@@ -285,6 +292,7 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         setupGlobe()
         setupStarField()
         setupContinents()
+        setupTectonicPlates()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -353,6 +361,7 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         drawGlobe()
         drawContinentFills()                                    // filled land before outlines
         if (showContinentLines) drawContinentLines()
+        if (showTectonicPlates) drawTectonicPlates()
         drawPoleAxisLine()
         drawPoleIndicators()
         drawRipples()
@@ -437,6 +446,18 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         continentLineBuffer = ByteBuffer.allocateDirect(geometry.lineVertices.size * 4)
             .order(ByteOrder.nativeOrder()).asFloatBuffer()
             .apply { put(geometry.lineVertices); position(0) }
+    }
+
+    /**
+     * Load the PB2002 tectonic plate boundaries (Bird 2003) as a single line-
+     * list buffer. Reuses the line shader the continent outlines already use.
+     */
+    private fun setupTectonicPlates() {
+        val verts = TectonicPlatesLoader.load(appContext)
+        plateLineVertexCount = verts.size / 3
+        plateLineBuffer = ByteBuffer.allocateDirect(verts.size * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+            .apply { put(verts); position(0) }
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -529,6 +550,28 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         GLES20.glEnableVertexAttribArray(posH)
         GLES20.glLineWidth(1.5f)
         GLES20.glDrawArrays(GLES20.GL_LINES, 0, continentLineVertexCount)
+        GLES20.glDisableVertexAttribArray(posH)
+    }
+
+    private fun drawTectonicPlates() {
+        val buf = plateLineBuffer ?: return
+        if (plateLineVertexCount == 0) return
+        GLES20.glUseProgram(lineProgram)
+
+        val posH   = GLES20.glGetAttribLocation(lineProgram,  "aPosition")
+        val mvpH   = GLES20.glGetUniformLocation(lineProgram, "uMVPMatrix")
+        val colorH = GLES20.glGetUniformLocation(lineProgram, "uLineColor")
+
+        GLES20.glUniformMatrix4fv(mvpH, 1, false, mvpMatrix, 0)
+        // Warm orange — distinguishable from cool-blue continent outlines and
+        // from the yellow swarm spines.
+        GLES20.glUniform4f(colorH, 1.00f, 0.55f, 0.20f, 0.75f)
+
+        buf.position(0)
+        GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, 12, buf)
+        GLES20.glEnableVertexAttribArray(posH)
+        GLES20.glLineWidth(2.0f)
+        GLES20.glDrawArrays(GLES20.GL_LINES, 0, plateLineVertexCount)
         GLES20.glDisableVertexAttribArray(posH)
     }
 
@@ -799,7 +842,14 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         }
     }
 
-    fun updateStacks(list: List<MarkerStack>) { stacks = list }
+    fun updateStacks(list: List<MarkerStack>) {
+        stacks = list
+        stackPositions = list.map {
+            // Stack hit-test uses the spine BASE (where the swarm sits on the
+            // ground) — easier to tap than the floating dots above.
+            latLonToXYZ(it.centre.lat.toFloat(), it.centre.lon.toFloat(), 1.02f)
+        }
+    }
 
     fun updateRipples(list: List<RippleSpec>) { ripples = list }
 
@@ -871,6 +921,24 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         val ro = transformPoint(invModel, floatArrayOf(nearW[0], nearW[1], nearW[2]))
         val rd = transformDir(invModel, rayDir)
 
+        // 1. Stacks win over individual markers — a swarm spine should always
+        // take the tap over any marker sitting at its base. Slightly larger
+        // hit radius (0.10 vs 0.07) since stacks visually stick up from the
+        // surface and tapping near the top should still register.
+        var bestStackIdx = -1; var bestStackDist = Float.MAX_VALUE
+        stackPositions.forEachIndexed { i, pos ->
+            val d = rayPointDistance(ro, rd, pos)
+            if (d < 0.10f && d < bestStackDist) { bestStackDist = d; bestStackIdx = i }
+        }
+        if (bestStackIdx >= 0) {
+            val stack = stacks.getOrNull(bestStackIdx)
+            if (stack != null) {
+                onStackTapped?.invoke(stack)
+                return null
+            }
+        }
+
+        // 2. Otherwise fall through to the flat marker layer.
         var bestIndex = -1; var bestDist = Float.MAX_VALUE
         markerPositions.forEachIndexed { i, pos ->
             val d = rayPointDistance(ro, rd, pos)

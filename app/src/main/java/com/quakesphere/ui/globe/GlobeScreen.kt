@@ -107,6 +107,7 @@ fun GlobeScreen(
             factory = { context ->
                 GlobeView(context).apply {
                     onMarkerClick = { marker -> viewModel.selectEarthquakeById(marker.id) }
+                    onStackClick  = { stack  -> viewModel.selectSwarm(stack.id) }
                     globeViewRef = this
                 }
             },
@@ -128,7 +129,8 @@ fun GlobeScreen(
                 view.displaySettings = com.quakesphere.globe.GlobeDisplaySettings(
                     showContinentLines = uiState.displaySettings.showContinentLines,
                     showStars          = uiState.displaySettings.showStars,
-                    autoRotate         = uiState.displaySettings.autoRotate
+                    autoRotate         = uiState.displaySettings.autoRotate,
+                    showTectonicPlates = uiState.displaySettings.showTectonicPlates
                 )
             },
             modifier = Modifier.fillMaxSize()
@@ -210,26 +212,44 @@ fun GlobeScreen(
                 }
             }
 
-            // ── Latest-quake pill ─────────────────────────────────────────
-            // A single small line just under the header that says exactly
-            // which quake the bright white pulsing marker on the globe is.
-            // Tapping it focuses that quake (same flow as tapping its marker).
-            uiState.earthquakes.maxByOrNull { it.time }?.let { latest ->
+            // ── Highlight pill (alternates LATEST ↔ BIGGEST) ───────────────
+            // Same physical pill swaps its mode every 6 seconds so the user
+            // sees both the most recent quake and the most significant one
+            // in the current filter window without any extra UI noise.
+            val latest  = uiState.earthquakes.maxByOrNull { it.time }
+            val biggest = uiState.earthquakes.maxByOrNull { it.mag }
+            // Only bother alternating if the two are different — a single quake
+            // is both "latest" and "biggest" simultaneously.
+            val showAlternating = latest != null && biggest != null && latest.id != biggest.id
+            var showBiggest by remember { mutableStateOf(false) }
+            LaunchedEffect(showAlternating) {
+                if (!showAlternating) { showBiggest = false; return@LaunchedEffect }
+                while (true) {
+                    kotlinx.coroutines.delay(6_000L)
+                    showBiggest = !showBiggest
+                }
+            }
+            val highlight = when {
+                showBiggest && biggest != null -> HighlightQuake(biggest, HighlightKind.BIGGEST)
+                latest  != null               -> HighlightQuake(latest,  HighlightKind.LATEST)
+                biggest != null               -> HighlightQuake(biggest, HighlightKind.BIGGEST)
+                else                          -> null
+            }
+            highlight?.let { hl ->
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    LatestQuakePill(
-                        earthquake = latest,
+                    HighlightQuakePill(
+                        earthquake = hl.quake,
+                        kind       = hl.kind,
                         onClick    = {
-                            // 1. fly the camera to the epicentre (eased glide)
                             globeViewRef?.flyTo(
-                                com.quakesphere.globe.GeoCoord(latest.lat, latest.lon)
+                                com.quakesphere.globe.GeoCoord(hl.quake.lat, hl.quake.lon)
                             )
-                            // 2. open the bottom-sheet detail for it
-                            viewModel.selectEarthquakeById(latest.id)
+                            viewModel.selectEarthquakeById(hl.quake.id)
                         }
                     )
                 }
@@ -287,6 +307,24 @@ fun GlobeScreen(
             }
         }
 
+        // ── Selected swarm popup ─────────────────────────────────────────────
+        val selectedSwarm = uiState.swarms.firstOrNull { it.id == uiState.selectedSwarmId }
+        AnimatedVisibility(
+            visible = selectedSwarm != null,
+            enter   = slideInVertically(initialOffsetY = { it }),
+            exit    = slideOutVertically(targetOffsetY = { it }),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            selectedSwarm?.let { sw ->
+                SwarmInfoCard(
+                    swarm    = sw,
+                    onEventClick = { id -> viewModel.selectSwarm(null); viewModel.selectEarthquakeById(id) },
+                    onDismiss = { viewModel.selectSwarm(null) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+            }
+        }
+
         SnackbarHost(
             hostState = snackbarHostState,
             modifier  = Modifier.align(Alignment.BottomCenter)
@@ -327,8 +365,117 @@ fun MagnitudeLegend(
 }
 
 @Composable
-fun LatestQuakePill(
+fun SwarmInfoCard(
+    swarm: com.quakesphere.domain.model.EarthquakeSwarm,
+    onEventClick: (String) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    androidx.compose.material3.Card(
+        modifier  = modifier.fillMaxWidth(),
+        colors    = androidx.compose.material3.CardDefaults.cardColors(containerColor = SurfaceCard),
+        shape     = RoundedCornerShape(16.dp),
+        elevation = androidx.compose.material3.CardDefaults.cardElevation(8.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment     = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "SWARM",
+                        color = Color(0xFFFFBB33),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.5.sp
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text       = swarm.location,
+                        color      = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize   = 15.sp,
+                        maxLines   = 2
+                    )
+                    Text(
+                        text     = "${swarm.eventCount} events · ${swarm.durationHours}h duration · " +
+                                   "started ${formatTimeAgo(swarm.startTime)}",
+                        color    = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                }
+                Text(
+                    text     = "✕",
+                    color    = TextSecondary,
+                    fontSize = 18.sp,
+                    modifier = Modifier.clickable { onDismiss() }.padding(4.dp)
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            // Mini-table: tap a row to focus that quake.
+            swarm.events.take(8).forEach { event ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onEventClick(event.id) }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(magnitudeColor(event.mag)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text       = String.format("%.1f", event.mag),
+                            color      = magnitudeTextColor(event.mag),
+                            fontSize   = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text       = event.place,
+                        color      = TextPrimary,
+                        fontSize   = 12.sp,
+                        modifier   = Modifier.weight(1f),
+                        maxLines   = 1
+                    )
+                    Text(
+                        text     = formatTimeAgo(event.time),
+                        color    = TextSecondary,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+            if (swarm.events.size > 8) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text     = "+ ${swarm.events.size - 8} more",
+                    color    = TextSecondary,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 38.dp)
+                )
+            }
+        }
+    }
+}
+
+enum class HighlightKind(val label: String, val tint: Color, val dotColor: Color) {
+    LATEST ("LATEST",  Color(0xFFAAD4FF), Color.White),
+    BIGGEST("BIGGEST", Color(0xFFFFC04D), Color(0xFFFFE082))
+}
+
+private data class HighlightQuake(val quake: Earthquake, val kind: HighlightKind)
+
+@Composable
+fun HighlightQuakePill(
     earthquake: Earthquake,
+    kind: HighlightKind,
     onClick: () -> Unit
 ) {
     Row(
@@ -339,17 +486,16 @@ fun LatestQuakePill(
             .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Tiny pulsing dot to mirror the bright marker on the globe.
         Box(
             modifier = Modifier
                 .size(8.dp)
                 .clip(CircleShape)
-                .background(Color.White)
+                .background(kind.dotColor)
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            text = "LATEST",
-            color = Color(0xFFAAD4FF),
+            text = kind.label,
+            color = kind.tint,
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.5.sp

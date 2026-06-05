@@ -74,6 +74,8 @@ data class SettingsUiState(
     val showContinentLines:     Boolean         = true,
     val showStars:              Boolean         = true,
     val autoRotate:             Boolean         = false,
+    val showTectonicPlates:     Boolean         = false,
+    val showHistoricTrends:     Boolean         = false,
     val markerColorMode:        MarkerColorMode = MarkerColorMode.DEPTH,
     // Sync
     val syncInterval: SyncInterval = SyncInterval.THIRTY,
@@ -100,6 +102,8 @@ class SettingsViewModel @Inject constructor(
         val KEY_SHOW_CONTINENT_LINES = booleanPreferencesKey("show_continent_lines")
         val KEY_SHOW_STARS           = booleanPreferencesKey("show_stars")
         val KEY_AUTO_ROTATE          = booleanPreferencesKey("auto_rotate")
+        val KEY_SHOW_TECTONIC_PLATES = booleanPreferencesKey("show_tectonic_plates")
+        val KEY_SHOW_HISTORIC_TRENDS = booleanPreferencesKey("show_historic_trends")
         val KEY_MARKER_COLOR_MODE    = stringPreferencesKey("marker_color_mode")
         val KEY_SYNC_INTERVAL        = intPreferencesKey("sync_interval_minutes")
         val KEY_SWARM_MIN_EVENTS     = intPreferencesKey("swarm_min_events")
@@ -127,6 +131,8 @@ class SettingsViewModel @Inject constructor(
                         showContinentLines     = p[KEY_SHOW_CONTINENT_LINES] ?: true,
                         showStars              = p[KEY_SHOW_STARS]           ?: true,
                         autoRotate             = p[KEY_AUTO_ROTATE]          ?: false,
+                        showTectonicPlates     = p[KEY_SHOW_TECTONIC_PLATES] ?: false,
+                        showHistoricTrends     = p[KEY_SHOW_HISTORIC_TRENDS] ?: false,
                         markerColorMode        = MarkerColorMode.values().firstOrNull {
                             it.key == (p[KEY_MARKER_COLOR_MODE] ?: "depth")
                         } ?: MarkerColorMode.DEPTH,
@@ -153,6 +159,8 @@ class SettingsViewModel @Inject constructor(
     fun setShowContinentLines(v: Boolean)  = save { it[KEY_SHOW_CONTINENT_LINES] = v }
     fun setShowStars(v: Boolean)           = save { it[KEY_SHOW_STARS] = v }
     fun setAutoRotate(v: Boolean)          = save { it[KEY_AUTO_ROTATE] = v }
+    fun setShowTectonicPlates(v: Boolean)  = save { it[KEY_SHOW_TECTONIC_PLATES] = v }
+    fun setShowHistoricTrends(v: Boolean)  = save { it[KEY_SHOW_HISTORIC_TRENDS] = v }
     fun setMarkerColorMode(v: MarkerColorMode) = save { it[KEY_MARKER_COLOR_MODE] = v.key }
     fun setSyncInterval(v: SyncInterval) {
         save { it[KEY_SYNC_INTERVAL] = v.minutes }

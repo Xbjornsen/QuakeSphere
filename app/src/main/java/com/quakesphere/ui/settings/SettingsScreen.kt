@@ -164,6 +164,20 @@ fun SettingsScreen(
                     onCheckedChange = { viewModel.setAutoRotate(it) }
                 )
                 HorizontalDivider(color = SurfaceVariant)
+                ToggleRow(
+                    title    = "Tectonic Plates",
+                    subtitle = "Overlay PB2002 plate boundaries (Bird 2003)",
+                    checked  = s.showTectonicPlates,
+                    onCheckedChange = { viewModel.setShowTectonicPlates(it) }
+                )
+                HorizontalDivider(color = SurfaceVariant)
+                ToggleRow(
+                    title    = "Historic Trends (beta)",
+                    subtitle = "Density of significant quakes over the last 30 years",
+                    checked  = s.showHistoricTrends,
+                    onCheckedChange = { viewModel.setShowHistoricTrends(it) }
+                )
+                HorizontalDivider(color = SurfaceVariant)
                 Spacer(Modifier.height(4.dp))
                 Text("Marker Colour Mode", color = TextPrimary, fontSize = 15.sp)
                 Text("What property drives dot colour", color = TextSecondary, fontSize = 12.sp)

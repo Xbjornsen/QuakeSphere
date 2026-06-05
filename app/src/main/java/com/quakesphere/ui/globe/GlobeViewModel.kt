@@ -31,6 +31,7 @@ data class GlobeDisplaySettings(
     val showContinentLines:     Boolean = true,
     val showStars:              Boolean = true,
     val autoRotate:             Boolean = false,
+    val showTectonicPlates:     Boolean = false,
     val markerColorByMagnitude: Boolean = false,
     val useMiles:               Boolean = false
 )
@@ -39,6 +40,7 @@ data class GlobeUiState(
     val earthquakes:     List<Earthquake>      = emptyList(),
     val swarms:          List<EarthquakeSwarm> = emptyList(),
     val selectedEarthquake: Earthquake?        = null,
+    val selectedSwarmId:    String?            = null,
     val isLoading:       Boolean               = false,
     val errorMessage:    String?               = null,
     val minMagnitude:    Double                = 5.0,
@@ -59,6 +61,7 @@ class GlobeViewModel @Inject constructor(
         val KEY_SHOW_CONTINENT_LINES = booleanPreferencesKey("show_continent_lines")
         val KEY_SHOW_STARS           = booleanPreferencesKey("show_stars")
         val KEY_AUTO_ROTATE          = booleanPreferencesKey("auto_rotate")
+        val KEY_SHOW_TECTONIC_PLATES = booleanPreferencesKey("show_tectonic_plates")
         val KEY_MARKER_COLOR_MODE    = stringPreferencesKey("marker_color_mode")
         val KEY_SWARM_MIN_EVENTS     = androidx.datastore.preferences.core.intPreferencesKey("swarm_min_events")
         val KEY_TIME_RANGE           = stringPreferencesKey("time_range")
@@ -104,6 +107,7 @@ class GlobeViewModel @Inject constructor(
                             showContinentLines     = prefs[KEY_SHOW_CONTINENT_LINES] ?: true,
                             showStars              = prefs[KEY_SHOW_STARS] ?: true,
                             autoRotate             = prefs[KEY_AUTO_ROTATE] ?: false,
+                            showTectonicPlates     = prefs[KEY_SHOW_TECTONIC_PLATES] ?: false,
                             markerColorByMagnitude = (prefs[KEY_MARKER_COLOR_MODE] ?: "depth") == "magnitude",
                             useMiles               = (prefs[KEY_DISTANCE_UNIT] ?: "km") == "miles"
                         ),
@@ -167,5 +171,9 @@ class GlobeViewModel @Inject constructor(
     }
 
     fun clearSelection() { _uiState.value = _uiState.value.copy(selectedEarthquake = null) }
+
+    fun selectSwarm(id: String?) {
+        _uiState.value = _uiState.value.copy(selectedSwarmId = id)
+    }
     fun clearError()     { _uiState.value = _uiState.value.copy(errorMessage = null) }
 }

@@ -38,6 +38,13 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
     /** Invoked on the main thread when the user taps a [Marker]. */
     var onMarkerClick: ((Marker) -> Unit)? = null
 
+    /**
+     * Invoked on the main thread when the user taps a [MarkerStack] (e.g.
+     * a swarm spine). Takes precedence over [onMarkerClick] when the tap
+     * is closer to a stack centre than to any marker.
+     */
+    var onStackClick: ((MarkerStack) -> Unit)? = null
+
     // ── Public data setters ──────────────────────────────────────────────────
 
     /** Replaces the flat marker layer. Markers in [markers] that share a
@@ -76,6 +83,7 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
             renderer.showContinentLines = value.showContinentLines
             renderer.showStars          = value.showStars
             renderer.autoRotate         = value.autoRotate
+            renderer.showTectonicPlates = value.showTectonicPlates
         }
 
     // ── Touch handling ───────────────────────────────────────────────────────
@@ -119,6 +127,11 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
         setEGLContextClientVersion(2)
         setRenderer(renderer)
         renderMode = RENDERMODE_CONTINUOUSLY
+        // Forward stack taps from the GL thread up to the main thread, where
+        // consumers' Compose / View state lives.
+        renderer.onStackTapped = { stack ->
+            post { onStackClick?.invoke(stack) }
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {

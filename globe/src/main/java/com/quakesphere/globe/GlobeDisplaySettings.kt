@@ -10,5 +10,11 @@ package com.quakesphere.globe
 data class GlobeDisplaySettings(
     val showContinentLines: Boolean = true,
     val showStars:          Boolean = true,
-    val autoRotate:         Boolean = false
+    val autoRotate:         Boolean = false,
+    /**
+     * When true, the Bird (2003) PB2002 tectonic plate boundaries are
+     * drawn over the globe in warm orange. Useful for relating quake
+     * clusters to plate interactions.
+     */
+    val showTectonicPlates: Boolean = false
 )
