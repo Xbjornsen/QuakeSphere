@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import kotlin.math.cos
 import kotlin.math.sin
 import androidx.compose.foundation.shape.CircleShape
@@ -42,7 +43,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,6 +93,10 @@ fun GlobeScreen(
         }
     }
 
+    // We hold onto the GlobeView so the "Latest" pill (and any other
+    // imperative UI affordance) can call flyTo on it directly.
+    var globeViewRef by remember { mutableStateOf<GlobeView?>(null) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -100,6 +107,7 @@ fun GlobeScreen(
             factory = { context ->
                 GlobeView(context).apply {
                     onMarkerClick = { marker -> viewModel.selectEarthquakeById(marker.id) }
+                    globeViewRef = this
                 }
             },
             update = { view ->
@@ -202,6 +210,31 @@ fun GlobeScreen(
                 }
             }
 
+            // ── Latest-quake pill ─────────────────────────────────────────
+            // A single small line just under the header that says exactly
+            // which quake the bright white pulsing marker on the globe is.
+            // Tapping it focuses that quake (same flow as tapping its marker).
+            uiState.earthquakes.maxByOrNull { it.time }?.let { latest ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    LatestQuakePill(
+                        earthquake = latest,
+                        onClick    = {
+                            // 1. fly the camera to the epicentre (eased glide)
+                            globeViewRef?.flyTo(
+                                com.quakesphere.globe.GeoCoord(latest.lat, latest.lon)
+                            )
+                            // 2. open the bottom-sheet detail for it
+                            viewModel.selectEarthquakeById(latest.id)
+                        }
+                    )
+                }
+            }
+
             // ── North indicator ───────────────────────────────────────────
             Box(
                 modifier = Modifier
@@ -290,6 +323,58 @@ fun MagnitudeLegend(
                 LegendItem(color = DepthDeep,         label = "Deep  >300 km")
             }
         }
+    }
+}
+
+@Composable
+fun LatestQuakePill(
+    earthquake: Earthquake,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Tiny pulsing dot to mirror the bright marker on the globe.
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(Color.White)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "LATEST",
+            color = Color(0xFFAAD4FF),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.5.sp
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "M${String.format("%.1f", earthquake.mag)}",
+            color = magnitudeColor(earthquake.mag),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = earthquake.place,
+            color = TextPrimary,
+            fontSize = 12.sp,
+            maxLines = 1,
+            modifier = Modifier.widthIn(max = 180.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = "· ${formatTimeAgo(earthquake.time)}",
+            color = TextSecondary,
+            fontSize = 12.sp
+        )
     }
 }
 

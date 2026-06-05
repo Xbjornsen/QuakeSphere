@@ -30,12 +30,27 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     private val normalMatrix     = FloatArray(16)
 
     // ── Globe rotation / zoom ────────────────────────────────────────────────
+    // The public values are what the renderer actually uses each frame.
+    // The `target*` shadows hold what the user has gestured towards; we
+    // lerp the public values toward them every frame so the camera glides
+    // rather than snaps. Result: same input feels much smoother on-screen.
     var rotationX = 0f
+        private set
     var rotationY = 0f
+        private set
     var zoom      = 1.0f
         private set
+
+    @Volatile private var targetRotationX = 0f
+    @Volatile private var targetRotationY = 0f
+    @Volatile private var targetZoom      = 1.0f
+
     private val MIN_ZOOM = 0.5f
     private val MAX_ZOOM = 3.5f
+
+    /** Per-frame interpolation factor — higher = snappier, lower = more glide. */
+    private val ROTATION_LERP = 0.18f
+    private val ZOOM_LERP     = 0.20f
 
     // ── GL programs ──────────────────────────────────────────────────────────
     private var globeProgram  = 0
@@ -79,12 +94,17 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     @Volatile var showStars          = true
     @Volatile var autoRotate         = false
 
+    // ── Interaction tracking (used to pause auto-rotate after touches) ───────
+    @Volatile private var lastInteractionMs = 0L
+    private val AUTOROTATE_RESUME_DELAY_MS = 3000L
+
     // ── Tap callback ─────────────────────────────────────────────────────────
     var onMarkerTapped: ((Marker) -> Unit)? = null
 
     // ── Viewport ─────────────────────────────────────────────────────────────
     private var viewportWidth  = 1
     private var viewportHeight = 1
+    private var aspectRatio    = 1f
 
     // ── Animation ────────────────────────────────────────────────────────────
     private var pulseTime = 0f
@@ -271,21 +291,50 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         GLES20.glViewport(0, 0, width, height)
         viewportWidth  = width
         viewportHeight = height
-        val ratio = width.toFloat() / height.toFloat()
-        Matrix.frustumM(projectionMatrix, 0, -ratio, ratio, -1f, 1f, 2f, 100f)
+        aspectRatio    = width.toFloat() / height.toFloat()
+        // Projection is rebuilt every frame in onDrawFrame so the near plane
+        // can adapt to the current zoom — see the `Matrix.frustumM` call below.
     }
 
     override fun onDrawFrame(gl: GL10?) {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         pulseTime += 0.05f
-        if (autoRotate) {
-            rotationY = (rotationY + 0.018f) % 360f   // gentle drift ~1 revolution per 5.5 min
+        // Auto-rotate, but politely yield to the user — pause for 3 s after
+        // any drag / pinch / tap so they can study what they're looking at.
+        // Advances the *target* so the rotation lerp follows along smoothly.
+        if (autoRotate && System.currentTimeMillis() - lastInteractionMs > AUTOROTATE_RESUME_DELAY_MS) {
+            targetRotationY += 0.018f
         }
 
+        // Smooth interpolation toward gesture targets — this is what makes
+        // pinch-zoom and drag-rotate feel like a gliding camera rather than
+        // jumping in discrete steps once per touch event.
+        rotationX += (targetRotationX - rotationX) * ROTATION_LERP
+        rotationY += (targetRotationY - rotationY) * ROTATION_LERP
+        zoom      += (targetZoom      - zoom     ) * ZOOM_LERP
+
+        val camDist = 4.8f / zoom
         Matrix.setLookAtM(viewMatrix, 0,
-            0f, 0f, 4.8f / zoom,    // base distance; user controls `zoom` via pinch
+            0f, 0f, camDist,        // base distance; user controls `zoom` via pinch
             0f, 0f, 0f,
             0f, 1f, 0f
+        )
+
+        // ── Dynamic projection ──────────────────────────────────────────────
+        // Keep the near plane just in front of the closest part of the globe
+        // (sphere radius 1.0) so pinch-zoom never clips the surface — earlier
+        // versions used a fixed near=2 which made the front cap of the globe
+        // disappear past ~zoom 1.7, revealing the back hemisphere through a
+        // circular "hole". The frustum width/height scale with `near` so the
+        // effective FOV stays constant regardless of zoom.
+        val near = (camDist - 1.05f).coerceAtLeast(0.05f)
+        val far  = camDist + 80f
+        val nScale = near / 2.0f   // original near was 2 with extents ±aspect, ±1
+        Matrix.frustumM(
+            projectionMatrix, 0,
+            -aspectRatio * nScale, aspectRatio * nScale,
+            -1f * nScale, 1f * nScale,
+            near, far
         )
 
         if (showStars) drawStarField()
@@ -669,9 +718,6 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         GLES20.glEnable(GLES20.GL_BLEND)
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE)  // additive glow
 
-        val numRings  = 4
-        val maxRadius = 0.22f   // ~1400 km at globe scale
-
         for (ripple in currentRipples) {
             val center = latLonToXYZ(ripple.centre.lat.toFloat(), ripple.centre.lon.toFloat(), 1.026f)
             val normal = normalize3(center)
@@ -679,9 +725,19 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
             val (r, g, b) = unpackArgb(ripple.color)
             val peakA = ((ripple.color ushr 24) and 0xFF) / 255f
 
-            for (ring in 0 until numRings) {
-                val phase  = ((pulseTime * 0.30f) + ring.toFloat() / numRings) % 1.0f
-                val radius = phase * maxRadius
+            // Per-ripple shape, with hard safety clamps.
+            val rings    = ripple.ringCount.coerceIn(1, 12)
+            val speedMul = ripple.speed.coerceAtLeast(0.05f)
+            val radMax   = ripple.maxRadius.coerceIn(0.02f, 0.6f)
+
+            // Base pulse cadence (0.18f) is intentionally slower than the
+            // previous fixed 0.30f — calibrated so a default M5 ripple feels
+            // alive, not frantic. Caller's `speed` multiplies on top.
+            val cadence = 0.18f * speedMul
+
+            for (ring in 0 until rings) {
+                val phase  = ((pulseTime * cadence) + ring.toFloat() / rings) % 1.0f
+                val radius = phase * radMax
                 val alpha  = (1.0f - phase) * peakA
                 if (alpha < 0.04f) continue
                 drawRingOnSphere(center, radius, r, g, b, alpha,
@@ -749,16 +805,52 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
 
     fun setSelectedMarker(id: String?) { selectedMarkerId = id }
 
+    /**
+     * Smoothly rotates the globe so [lat] / [lon] lands at the visible centre.
+     * The actual movement runs through the same easing as drag-rotate, so the
+     * camera glides rather than snaps. Picks the shortest angular path so we
+     * don't spin the long way round when the user has already rotated.
+     */
+    fun flyTo(lat: Float, lon: Float) {
+        // Match the formulas baked into latLonToXYZ:
+        //   default rotationY=0 puts lon=90°E at the front, so to bring lon=L
+        //   to the front we want rotationY = 90 − L.
+        //   After that, rotationX=lat tilts the chosen lat line to the equator.
+        val rawTargetY = 90f - lon
+        val rawTargetX = lat
+
+        // Shortest-path delta around the circle so we don't sweep 350° to
+        // change by 10°.
+        var deltaY = (rawTargetY - targetRotationY) % 360f
+        if (deltaY > 180f)  deltaY -= 360f
+        if (deltaY < -180f) deltaY += 360f
+
+        targetRotationY += deltaY
+        targetRotationX  = rawTargetX.coerceIn(-90f, 90f)
+
+        // Pretend the user just touched, so auto-rotate doesn't immediately
+        // overwrite the destination we're gliding toward.
+        lastInteractionMs = System.currentTimeMillis()
+    }
+
     fun setRotation(dx: Float, dy: Float) {
-        rotationY += dx * 0.3f
-        rotationX  = (rotationX + dy * 0.3f).coerceIn(-90f, 90f)
+        // Scale by 1/zoom^1.5 so a 1 cm finger drag spins through roughly the
+        // same *visible* arc on screen regardless of camera distance. The 1.5
+        // exponent (rather than linear 1/zoom) gives noticeably more damping
+        // at the high end of pinch-in where input felt twitchy.
+        val s = 0.30f / Math.pow(zoom.toDouble(), 1.5).toFloat()
+        targetRotationY += dx * s
+        targetRotationX  = (targetRotationX + dy * s).coerceIn(-90f, 90f)
+        lastInteractionMs = System.currentTimeMillis()
     }
 
     fun setZoom(factor: Float) {
-        zoom = (zoom * factor).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        targetZoom = (targetZoom * factor).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        lastInteractionMs = System.currentTimeMillis()
     }
 
     fun handleTap(normalizedX: Float, normalizedY: Float): Marker? {
+        lastInteractionMs = System.currentTimeMillis()
         val vp = FloatArray(16)
         Matrix.multiplyMM(vp, 0, projectionMatrix, 0, viewMatrix, 0)
         val invVP = FloatArray(16)

@@ -54,6 +54,15 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
     /** Marks one marker as "selected" (causes a soft pulse). Pass null to clear. */
     fun setSelectedMarker(id: String?) { renderer.setSelectedMarker(id) }
 
+    /**
+     * Smoothly rotates the globe so [coord] lands at the visible centre.
+     * Uses the same easing as drag-rotate, so the camera glides over ~1 s
+     * rather than snapping. Picks the shortest angular path automatically.
+     */
+    fun flyTo(coord: GeoCoord) {
+        renderer.flyTo(coord.lat.toFloat(), coord.lon.toFloat())
+    }
+
     // ── Display settings ─────────────────────────────────────────────────────
 
     /**

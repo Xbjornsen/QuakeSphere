@@ -24,15 +24,24 @@ object NaturalEarthLoader {
         val lineVertices: FloatArray         // x,y,z per vertex; size = segmentCount*2*3
     )
 
-    private const val FILL_RADIUS = 1.0035f
-    private const val LINE_RADIUS = 1.0060f
+    private const val FILL_RADIUS = 1.0050f
+    private const val LINE_RADIUS = 1.0075f
 
     /**
-     * 4^N triangle multiplier per polygon. Level 2 = 16× = enough to make the
-     * Brazil-sized earcut facets visually disappear at max zoom, but only
-     * about 30 ms of extra startup work on a modern phone.
+     * Maximum allowed edge length (in 3D chord units on the sphere) for a fill
+     * triangle. Anything larger is recursively split.
+     *
+     * 0.087 ≈ chord of a 5° arc on a unit sphere. At that size, the midpoint of
+     * each triangle dips below the fill-radius sphere by ~0.001 — comfortably
+     * above the ocean mesh at radius 1.0, so no part of a continent ever gets
+     * eaten by the depth test. Small triangles (UK, Indonesia) emit straight
+     * through; only the giant Russia/Antarctica interior triangles keep
+     * subdividing.
      */
-    private const val SUBDIVISION_DEPTH = 2
+    private const val MAX_EDGE_LENGTH_SQ = 0.087f * 0.087f
+
+    /** Hard recursion cap so a pathologically thin triangle can't loop forever. */
+    private const val MAX_SUBDIVISION_DEPTH = 6
 
     fun load(context: Context): GeometryBuffers {
         val text = context.resources.openRawResource(R.raw.ne_110m_land)
@@ -127,9 +136,12 @@ object NaturalEarthLoader {
         val indices = Earcut.triangulate(flatArr, holeArr, dim = 2)
 
         // Project each earcut triangle onto the sphere, then recursively
-        // subdivide so individual triangles stay small enough to follow the
-        // curvature. Without this the few giant triangles inside e.g. Brazil
-        // become visibly flat facets when the user zooms in close.
+        // subdivide only the triangles that are too large. Small triangles
+        // (Indonesia, UK) emit immediately; giant triangles spanning the
+        // interior of Russia / Antarctica keep splitting until every edge is
+        // below MAX_EDGE_LENGTH_SQ — at which point the chord midpoint dip
+        // is small enough that no sub-triangle gets eaten by the ocean mesh's
+        // depth test.
         var i = 0
         while (i < indices.size) {
             val a = latLonOnSphere(flatArr[indices[i  ] * 2 + 1].toFloat(),
@@ -138,7 +150,7 @@ object NaturalEarthLoader {
                                    flatArr[indices[i+1] * 2    ].toFloat())
             val c = latLonOnSphere(flatArr[indices[i+2] * 2 + 1].toFloat(),
                                    flatArr[indices[i+2] * 2    ].toFloat())
-            subdivideTriangle(a, b, c, depth = SUBDIVISION_DEPTH, out = fills)
+            subdivideTriangle(a, b, c, depth = 0, out = fills)
             i += 3
         }
     }
@@ -155,14 +167,18 @@ object NaturalEarthLoader {
     }
 
     /**
-     * Recursively splits a triangle into 4 sub-triangles, projecting each new
-     * mid-edge vertex back onto the sphere so the geometry tracks the curvature.
-     * Output triangles are appended as flat XYZ floats.
+     * Adaptively split a sphere-projected triangle until every edge is below
+     * [MAX_EDGE_LENGTH_SQ]. Small triangles emit immediately; large ones
+     * recurse into 4 sub-triangles with each new mid-edge vertex re-projected
+     * onto the sphere so the geometry follows the curvature.
+     *
+     * [depth] is just a recursion guard against pathological inputs.
      */
     private fun subdivideTriangle(
         a: FloatArray, b: FloatArray, c: FloatArray, depth: Int, out: ArrayList<Float>
     ) {
-        if (depth == 0) {
+        val maxSq = maxOf(sqDist(a, b), sqDist(b, c), sqDist(c, a))
+        if (maxSq <= MAX_EDGE_LENGTH_SQ || depth >= MAX_SUBDIVISION_DEPTH) {
             out.add(a[0]); out.add(a[1]); out.add(a[2])
             out.add(b[0]); out.add(b[1]); out.add(b[2])
             out.add(c[0]); out.add(c[1]); out.add(c[2])
@@ -171,17 +187,19 @@ object NaturalEarthLoader {
         val ab = midpointOnSphere(a, b)
         val bc = midpointOnSphere(b, c)
         val ca = midpointOnSphere(c, a)
-        val d = depth - 1
-        // Three corner triangles share the parent's winding naturally.
+        val d = depth + 1
+        // All four sub-triangles share the parent's winding so consistently
+        // oriented (the centre's vertex order is reversed from the "natural"
+        // (ab,bc,ca) so it doesn't end up mirrored).
         subdivideTriangle(a,  ab, ca, d, out)
         subdivideTriangle(ab, b,  bc, d, out)
         subdivideTriangle(bc, c,  ca, d, out)
-        // The centre triangle's "natural" vertex order (ab, bc, ca) is the
-        // mirror of the parent winding. Emitting it as (ca, bc, ab) — the
-        // reverse — keeps every sub-triangle consistently oriented so drivers
-        // with subpixel-coverage heuristics don't drop the centres and leave
-        // a hexagonal lattice of holes across each parent.
         subdivideTriangle(ca, bc, ab, d, out)
+    }
+
+    private fun sqDist(a: FloatArray, b: FloatArray): Float {
+        val dx = a[0] - b[0]; val dy = a[1] - b[1]; val dz = a[2] - b[2]
+        return dx*dx + dy*dy + dz*dz
     }
 
     /** Midpoint between two sphere-surface points, re-projected onto the same sphere. */
