@@ -24,8 +24,15 @@ object NaturalEarthLoader {
         val lineVertices: FloatArray         // x,y,z per vertex; size = segmentCount*2*3
     )
 
-    private const val FILL_RADIUS = 1.0015f
-    private const val LINE_RADIUS = 1.0040f
+    private const val FILL_RADIUS = 1.0035f
+    private const val LINE_RADIUS = 1.0060f
+
+    /**
+     * 4^N triangle multiplier per polygon. Level 2 = 16× = enough to make the
+     * Brazil-sized earcut facets visually disappear at max zoom, but only
+     * about 30 ms of extra startup work on a modern phone.
+     */
+    private const val SUBDIVISION_DEPTH = 2
 
     fun load(context: Context): GeometryBuffers {
         val text = context.resources.openRawResource(R.raw.ne_110m_land)
@@ -104,12 +111,72 @@ object NaturalEarthLoader {
 
         val indices = Earcut.triangulate(flatArr, holeArr, dim = 2)
 
-        // Project each triangle vertex onto the sphere
-        for (idx in indices) {
-            val lon = flatArr[idx * 2].toFloat()
-            val lat = flatArr[idx * 2 + 1].toFloat()
-            appendXYZ(fills, lat, lon, FILL_RADIUS)
+        // Project each earcut triangle onto the sphere, then recursively
+        // subdivide so individual triangles stay small enough to follow the
+        // curvature. Without this the few giant triangles inside e.g. Brazil
+        // become visibly flat facets when the user zooms in close.
+        var i = 0
+        while (i < indices.size) {
+            val a = latLonOnSphere(flatArr[indices[i  ] * 2 + 1].toFloat(),
+                                   flatArr[indices[i  ] * 2    ].toFloat())
+            val b = latLonOnSphere(flatArr[indices[i+1] * 2 + 1].toFloat(),
+                                   flatArr[indices[i+1] * 2    ].toFloat())
+            val c = latLonOnSphere(flatArr[indices[i+2] * 2 + 1].toFloat(),
+                                   flatArr[indices[i+2] * 2    ].toFloat())
+            subdivideTriangle(a, b, c, depth = SUBDIVISION_DEPTH, out = fills)
+            i += 3
         }
+    }
+
+    /** Lat/lon → XYZ on the fill-radius sphere, matching the renderer's axis convention. */
+    private fun latLonOnSphere(lat: Float, lon: Float): FloatArray {
+        val latR = (lat.toDouble() * PI / 180.0).toFloat()
+        val lonR = (lon.toDouble() * PI / 180.0).toFloat()
+        return floatArrayOf(
+            -FILL_RADIUS * cos(latR) * cos(lonR),
+            FILL_RADIUS * sin(latR),
+            FILL_RADIUS * cos(latR) * sin(lonR)
+        )
+    }
+
+    /**
+     * Recursively splits a triangle into 4 sub-triangles, projecting each new
+     * mid-edge vertex back onto the sphere so the geometry tracks the curvature.
+     * Output triangles are appended as flat XYZ floats.
+     */
+    private fun subdivideTriangle(
+        a: FloatArray, b: FloatArray, c: FloatArray, depth: Int, out: ArrayList<Float>
+    ) {
+        if (depth == 0) {
+            out.add(a[0]); out.add(a[1]); out.add(a[2])
+            out.add(b[0]); out.add(b[1]); out.add(b[2])
+            out.add(c[0]); out.add(c[1]); out.add(c[2])
+            return
+        }
+        val ab = midpointOnSphere(a, b)
+        val bc = midpointOnSphere(b, c)
+        val ca = midpointOnSphere(c, a)
+        val d = depth - 1
+        // Three corner triangles share the parent's winding naturally.
+        subdivideTriangle(a,  ab, ca, d, out)
+        subdivideTriangle(ab, b,  bc, d, out)
+        subdivideTriangle(bc, c,  ca, d, out)
+        // The centre triangle's "natural" vertex order (ab, bc, ca) is the
+        // mirror of the parent winding. Emitting it as (ca, bc, ab) — the
+        // reverse — keeps every sub-triangle consistently oriented so drivers
+        // with subpixel-coverage heuristics don't drop the centres and leave
+        // a hexagonal lattice of holes across each parent.
+        subdivideTriangle(ca, bc, ab, d, out)
+    }
+
+    /** Midpoint between two sphere-surface points, re-projected onto the same sphere. */
+    private fun midpointOnSphere(a: FloatArray, b: FloatArray): FloatArray {
+        val mx = (a[0] + b[0]) * 0.5f
+        val my = (a[1] + b[1]) * 0.5f
+        val mz = (a[2] + b[2]) * 0.5f
+        val len = kotlin.math.sqrt(mx*mx + my*my + mz*mz).coerceAtLeast(1e-6f)
+        val s = FILL_RADIUS / len
+        return floatArrayOf(mx * s, my * s, mz * s)
     }
 
     /**

@@ -84,11 +84,8 @@ class EarthquakeListViewModel @Inject constructor(
     /** Current time-window in hours, sourced from settings (for manual refresh). */
     @Volatile private var rangeHours = TimeRange.DAYS_7.hours
 
-    init {
-        observeEarthquakes()
-        refresh()
-    }
-
+    // NB: must be declared BEFORE the init block — observeEarthquakes() reads it,
+    // and Kotlin runs property initialisers and init blocks in declaration order.
     private val settingsFlow = dataStore.data
         .catch { emit(emptyPreferences()) }
         .map { prefs ->
@@ -104,6 +101,11 @@ class EarthquakeListViewModel @Inject constructor(
             )
         }
         .distinctUntilChanged()
+
+    init {
+        observeEarthquakes()
+        refresh()
+    }
 
     private fun observeEarthquakes() {
         viewModelScope.launch {

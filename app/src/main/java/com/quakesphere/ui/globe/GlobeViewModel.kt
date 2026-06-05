@@ -156,6 +156,16 @@ class GlobeViewModel @Inject constructor(
         )
     }
 
+    /**
+     * Select by stable id. The `:globe` library only knows marker ids
+     * (it doesn't carry our domain types) so taps come back as ids.
+     */
+    fun selectEarthquakeById(id: String) {
+        _uiState.value = _uiState.value.copy(
+            selectedEarthquake = _uiState.value.earthquakes.firstOrNull { it.id == id }
+        )
+    }
+
     fun clearSelection() { _uiState.value = _uiState.value.copy(selectedEarthquake = null) }
     fun clearError()     { _uiState.value = _uiState.value.copy(errorMessage = null) }
 }

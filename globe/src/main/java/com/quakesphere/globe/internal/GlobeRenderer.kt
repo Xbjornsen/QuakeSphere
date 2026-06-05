@@ -1,11 +1,11 @@
-package com.quakesphere.ui.globe
+package com.quakesphere.globe.internal
 
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
-import com.quakesphere.domain.model.Earthquake
-import com.quakesphere.domain.model.EarthquakeSwarm
-import com.quakesphere.globe.internal.NaturalEarthLoader
+import com.quakesphere.globe.Marker
+import com.quakesphere.globe.MarkerStack
+import com.quakesphere.globe.RippleSpec
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -19,7 +19,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-class GlobeRenderer(private val appContext: android.content.Context) : GLSurfaceView.Renderer {
+internal class GlobeRenderer(private val appContext: android.content.Context) : GLSurfaceView.Renderer {
 
     // ── Matrices ────────────────────────────────────────────────────────────
     private val projectionMatrix = FloatArray(16)
@@ -63,23 +63,24 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
 
     @Volatile var lastMvpMatrix: FloatArray = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
 
-    // ── Earthquake markers ───────────────────────────────────────────────────
-    @Volatile private var earthquakes: List<Earthquake> = emptyList()
-    private var markerPositions: List<FloatArray>       = emptyList()
-    private var selectedIndex = -1
+    // ── Markers (the flat marker layer) ──────────────────────────────────────
+    @Volatile private var markers: List<Marker>        = emptyList()
+    @Volatile private var markerPositions: List<FloatArray> = emptyList()
+    private var selectedMarkerId: String? = null
 
-    // ── Swarm data ───────────────────────────────────────────────────────────
-    @Volatile private var swarms: List<EarthquakeSwarm> = emptyList()
-    @Volatile private var swarmEventIds: Set<String>    = emptySet()
+    // ── Marker stacks (radial spines, e.g. swarms) ───────────────────────────
+    @Volatile private var stacks: List<MarkerStack> = emptyList()
+
+    // ── Ripples (animated expanding rings) ───────────────────────────────────
+    @Volatile private var ripples: List<RippleSpec> = emptyList()
 
     // ── Settings ─────────────────────────────────────────────────────────────
-    @Volatile var showContinentLines     = true
-    @Volatile var showStars              = true
-    @Volatile var autoRotate             = false
-    @Volatile var markerColorByMagnitude = false
+    @Volatile var showContinentLines = true
+    @Volatile var showStars          = true
+    @Volatile var autoRotate         = false
 
     // ── Tap callback ─────────────────────────────────────────────────────────
-    var onMarkerTapped: ((Int) -> Unit)? = null
+    var onMarkerTapped: ((Marker) -> Unit)? = null
 
     // ── Viewport ─────────────────────────────────────────────────────────────
     private var viewportWidth  = 1
@@ -113,7 +114,8 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
 
     private val GLOBE_FRAGMENT_SHADER = """
         precision mediump float;
-        uniform vec3 uSunDir;
+        uniform vec3 uSunDir;       // view light (fixed behind camera, drives diffuse)
+        uniform vec3 uUtcSunDir;    // real subsolar point (drives night darkening)
         varying vec2 vTexCoord;
         varying vec3 vNormal;
         varying vec3 vWorldPos;
@@ -127,8 +129,8 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
             float sunDot  = dot(n, lightDir);
             float diffuse = max(sunDot, 0.0);
 
-            // Ocean diffuse
-            color *= (0.14 + diffuse * 0.86);
+            // Ocean diffuse — generous ambient floor so the limb still reads as ocean
+            color *= (0.30 + diffuse * 0.70);
 
             // Subtle specular shimmer (reduced from before)
             vec3 viewDir    = normalize(-vWorldPos);
@@ -141,9 +143,13 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
             rim = pow(rim, 2.8);
             color += rim * vec3(0.10, 0.35, 1.0) * 0.65;
 
-            // Night side
-            float nightFactor = smoothstep(0.06, -0.16, sunDot);
-            color = mix(color, color * 0.04, nightFactor);
+            // Real-time UTC night darkening — only dims surfaces where the sun
+            // is well below the horizon (deep night), and even then only by
+            // ~22%. Continents stay readable everywhere; the terminator is
+            // a subtle hint, not a hard divider.
+            float utcSunDot = dot(n, normalize(uUtcSunDir));
+            float nightFactor = smoothstep(-0.10, -0.40, utcSunDot);
+            color *= mix(1.0, 0.78, nightFactor);
 
             gl_FragColor = vec4(color, 1.0);
         }
@@ -207,7 +213,8 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
 
     private val FILL_FRAGMENT_SHADER = """
         precision mediump float;
-        uniform vec3  uSunDirModel;
+        uniform vec3  uSunDirModel;       // view light in model space (drives diffuse)
+        uniform vec3  uUtcSunDirModel;    // UTC sun in model space (drives night dim)
         uniform vec4  uFillColor;
         varying vec3  vModelPos;
         void main() {
@@ -215,9 +222,13 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
             vec3 n = normalize(vModelPos);
             float sunDot  = dot(n, normalize(uSunDirModel));
             float diffuse = max(sunDot, 0.0);
-            float night   = smoothstep(0.06, -0.16, sunDot);
-            vec3 color = uFillColor.rgb * (0.15 + diffuse * 0.85);
-            color = mix(color, color * 0.04, night);
+            vec3 color = uFillColor.rgb * (0.25 + diffuse * 0.75);
+
+            // Real-time UTC night darkening — only deep night gets a subtle dim.
+            float utcSunDot = dot(n, normalize(uUtcSunDirModel));
+            float nightFactor = smoothstep(-0.10, -0.40, utcSunDot);
+            color *= mix(1.0, 0.78, nightFactor);
+
             gl_FragColor = vec4(color, uFillColor.a);
         }
     """.trimIndent()
@@ -272,7 +283,7 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
         }
 
         Matrix.setLookAtM(viewMatrix, 0,
-            0f, 0f, 4.8f / zoom,
+            0f, 0f, 4.8f / zoom,    // base distance; user controls `zoom` via pinch
             0f, 0f, 0f,
             0f, 1f, 0f
         )
@@ -295,8 +306,8 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
         if (showContinentLines) drawContinentLines()
         drawPoleAxisLine()
         drawPoleIndicators()
-        drawTsunamiRipples()
-        drawSwarmSpines()
+        drawRipples()
+        drawStacks()
         drawMarkers()
     }
 
@@ -420,15 +431,18 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
         val mvH     = GLES20.glGetUniformLocation(globeProgram, "uMVMatrix")
         val normH   = GLES20.glGetUniformLocation(globeProgram, "uNormalMatrix")
         val sunH    = GLES20.glGetUniformLocation(globeProgram, "uSunDir")
+        val utcSunH = GLES20.glGetUniformLocation(globeProgram, "uUtcSunDir")
         val posH    = GLES20.glGetAttribLocation(globeProgram, "aPosition")
         val normalH = GLES20.glGetAttribLocation(globeProgram, "aNormal")
         val texH    = GLES20.glGetAttribLocation(globeProgram, "aTexCoord")
 
-        val sun = computeSunDirectionEyeSpace()
+        val viewLight = computeViewLightDirection()
+        val utcSun    = computeUtcSunDirection()
         GLES20.glUniformMatrix4fv(mvpH,  1, false, mvpMatrix,    0)
         GLES20.glUniformMatrix4fv(mvH,   1, false, mvMatrix,     0)
         GLES20.glUniformMatrix4fv(normH, 1, false, normalMatrix, 0)
-        GLES20.glUniform3f(sunH, sun[0], sun[1], sun[2])
+        GLES20.glUniform3f(sunH,    viewLight[0], viewLight[1], viewLight[2])
+        GLES20.glUniform3f(utcSunH, utcSun[0],    utcSun[1],    utcSun[2])
 
         val STRIDE = 32 // 8 floats × 4 bytes
         sphereVertexBuffer?.position(0)
@@ -476,16 +490,19 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
         val posH      = GLES20.glGetAttribLocation(fillProgram,  "aPosition")
         val mvpH      = GLES20.glGetUniformLocation(fillProgram, "uMVPMatrix")
         val sunH      = GLES20.glGetUniformLocation(fillProgram, "uSunDirModel")
+        val utcSunH   = GLES20.glGetUniformLocation(fillProgram, "uUtcSunDirModel")
         val colorH    = GLES20.glGetUniformLocation(fillProgram, "uFillColor")
 
-        // Sun direction in model space = inv(modelMatrix) * sunDirWorld
-        val sun       = computeSunDirectionEyeSpace()
-        val invModel  = FloatArray(16)
+        // Both lights are world-space; transform them into model space because
+        // the fill shader uses model-space normals (vertex position on unit sphere).
+        val invModel       = FloatArray(16)
         Matrix.invertM(invModel, 0, modelMatrix, 0)
-        val sunModel  = transformDir(invModel, sun)
+        val viewLightModel = transformDir(invModel, computeViewLightDirection())
+        val utcSunModel    = transformDir(invModel, computeUtcSunDirection())
 
-        GLES20.glUniformMatrix4fv(mvpH,   1, false, mvpMatrix, 0)
-        GLES20.glUniform3f(sunH,   sunModel[0], sunModel[1], sunModel[2])
+        GLES20.glUniformMatrix4fv(mvpH, 1, false, mvpMatrix, 0)
+        GLES20.glUniform3f(sunH,    viewLightModel[0], viewLightModel[1], viewLightModel[2])
+        GLES20.glUniform3f(utcSunH, utcSunModel[0],    utcSunModel[1],    utcSunModel[2])
         GLES20.glUniform4f(colorH, 0.20f, 0.36f, 0.12f, 1.0f)
 
         buf.position(0)
@@ -515,42 +532,38 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
         val posH    = GLES20.glGetAttribLocation(markerProgram,  "aPosition")
         val uvH     = GLES20.glGetAttribLocation(markerProgram,  "aUV")
 
-        val currentEarthquakes = earthquakes
-        val currentSwarmIds    = swarmEventIds
+        val currentMarkers = markers
+        val selectedId     = selectedMarkerId
 
-        currentEarthquakes.forEachIndexed { index, quake ->
+        currentMarkers.forEachIndexed { index, marker ->
             if (index >= markerPositions.size) return@forEachIndexed
-            // Swarm events are rendered on spines instead
-            if (currentSwarmIds.isNotEmpty() && quake.id in currentSwarmIds) return@forEachIndexed
 
-            val pos   = markerPositions[index]
-            val size  = (0.030f + (quake.mag - 4.0).toFloat() * 0.013f).coerceIn(0.030f, 0.13f)
-            val alpha = if (index == selectedIndex)
+            val pos  = markerPositions[index]
+            val size = (0.045f * marker.sizeHint).coerceIn(0.025f, 0.16f)
+            val alpha = if (marker.pulsing || marker.id == selectedId)
                 0.9f + 0.1f * sin(pulseTime * 4f) else 0.75f
 
-            val (r, g, b) = quakeColor(quake)
-
+            val (r, g, b) = unpackArgb(marker.color)
             drawBillboardMarker(mvpH, colorH, alphaH, sizeH, posH, uvH, pos, size, r, g, b, alpha)
         }
 
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
     }
 
-    private fun drawSwarmSpines() {
-        val currentSwarms = swarms
-        if (currentSwarms.isEmpty()) return
+    private fun drawStacks() {
+        val currentStacks = stacks
+        if (currentStacks.isEmpty()) return
 
-        for (swarm in currentSwarms) {
-            val base   = latLonToXYZ(swarm.centerLat.toFloat(), swarm.centerLon.toFloat(), 1.02f)
+        for (stack in currentStacks) {
+            val base = latLonToXYZ(stack.centre.lat.toFloat(), stack.centre.lon.toFloat(), 1.02f)
             val normal = normalize3(base)
-            val spineLen = swarm.eventCount * 0.042f
-            val tipR   = 1.02f + spineLen
-            val tip    = floatArrayOf(normal[0]*tipR, normal[1]*tipR, normal[2]*tipR)
+            val spineLen = stack.markers.size * 0.042f
+            val tipR = 1.02f + spineLen
+            val tip  = floatArrayOf(normal[0]*tipR, normal[1]*tipR, normal[2]*tipR)
 
             // Spine line – warm gold
             drawLineSegment(base, tip, 1.0f, 0.75f, 0.1f, 0.85f)
 
-            // Stacked dots along spine, largest at bottom (closest to surface)
             GLES20.glEnable(GLES20.GL_BLEND)
             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE)
             GLES20.glUseProgram(markerProgram)
@@ -562,13 +575,13 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
             val posH   = GLES20.glGetAttribLocation(markerProgram,  "aPosition")
             val uvH    = GLES20.glGetAttribLocation(markerProgram,  "aUV")
 
-            for ((i, event) in swarm.events.withIndex()) {
+            for ((i, marker) in stack.markers.withIndex()) {
                 val r    = 1.02f + i * 0.042f
                 val pos  = floatArrayOf(normal[0]*r, normal[1]*r, normal[2]*r)
-                val size = (0.036f + (event.mag - 4.0).toFloat() * 0.010f).coerceIn(0.032f, 0.080f)
-                val (er, eg, eb) = quakeColor(event)
-                val pulse = if (i == 0) 0.9f + 0.1f * sin(pulseTime * 3f) else 0.85f
-                drawBillboardMarker(mvpH, colorH, alphaH, sizeH, posH, uvH, pos, size, er, eg, eb, pulse)
+                val size = (0.050f * marker.sizeHint).coerceIn(0.030f, 0.090f)
+                val (er, eg, eb) = unpackArgb(marker.color)
+                val alpha = if (i == 0 || marker.pulsing) 0.9f + 0.1f * sin(pulseTime * 3f) else 0.85f
+                drawBillboardMarker(mvpH, colorH, alphaH, sizeH, posH, uvH, pos, size, er, eg, eb, alpha)
             }
             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
         }
@@ -646,31 +659,32 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // Tsunami ripples
+    // Ripples — expanding rings around RippleSpec centres
     // ════════════════════════════════════════════════════════════════════════
 
-    private fun drawTsunamiRipples() {
-        val quakes = earthquakes
-        val tsunamiQuakes = quakes.filter { it.tsunami == 1 }
-        if (tsunamiQuakes.isEmpty()) return
+    private fun drawRipples() {
+        val currentRipples = ripples
+        if (currentRipples.isEmpty()) return
 
         GLES20.glEnable(GLES20.GL_BLEND)
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE)  // additive glow
 
-        val numRings   = 4
-        val maxRadius  = 0.22f   // ~1400 km at globe scale
+        val numRings  = 4
+        val maxRadius = 0.22f   // ~1400 km at globe scale
 
-        for (quake in tsunamiQuakes) {
-            val center = latLonToXYZ(quake.lat.toFloat(), quake.lon.toFloat(), 1.026f)
+        for (ripple in currentRipples) {
+            val center = latLonToXYZ(ripple.centre.lat.toFloat(), ripple.centre.lon.toFloat(), 1.026f)
             val normal = normalize3(center)
             val (t1, t2) = tangentFrame(normal)
+            val (r, g, b) = unpackArgb(ripple.color)
+            val peakA = ((ripple.color ushr 24) and 0xFF) / 255f
 
             for (ring in 0 until numRings) {
                 val phase  = ((pulseTime * 0.30f) + ring.toFloat() / numRings) % 1.0f
                 val radius = phase * maxRadius
-                val alpha  = (1.0f - phase) * 0.75f
+                val alpha  = (1.0f - phase) * peakA
                 if (alpha < 0.04f) continue
-                drawRingOnSphere(center, radius, 0.20f, 0.72f, 1.00f, alpha,
+                drawRingOnSphere(center, radius, r, g, b, alpha,
                     t1Override = t1, t2Override = t2)
             }
         }
@@ -722,15 +736,18 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
     // Public API
     // ════════════════════════════════════════════════════════════════════════
 
-    fun updateEarthquakes(list: List<Earthquake>) {
-        earthquakes     = list
-        markerPositions = list.map { latLonToXYZ(it.lat.toFloat(), it.lon.toFloat(), 1.02f) }
+    fun updateMarkers(list: List<Marker>) {
+        markers = list
+        markerPositions = list.map {
+            latLonToXYZ(it.coord.lat.toFloat(), it.coord.lon.toFloat(), 1.02f)
+        }
     }
 
-    fun updateSwarms(list: List<EarthquakeSwarm>) {
-        swarms       = list
-        swarmEventIds = list.flatMap { s -> s.events.map { it.id } }.toSet()
-    }
+    fun updateStacks(list: List<MarkerStack>) { stacks = list }
+
+    fun updateRipples(list: List<RippleSpec>) { ripples = list }
+
+    fun setSelectedMarker(id: String?) { selectedMarkerId = id }
 
     fun setRotation(dx: Float, dy: Float) {
         rotationY += dx * 0.3f
@@ -741,7 +758,7 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
         zoom = (zoom * factor).coerceIn(MIN_ZOOM, MAX_ZOOM)
     }
 
-    fun handleTap(normalizedX: Float, normalizedY: Float): Int {
+    fun handleTap(normalizedX: Float, normalizedY: Float): Marker? {
         val vp = FloatArray(16)
         Matrix.multiplyMM(vp, 0, projectionMatrix, 0, viewMatrix, 0)
         val invVP = FloatArray(16)
@@ -768,33 +785,22 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
             if (d < 0.07f && d < bestDist) { bestDist = d; bestIndex = i }
         }
 
-        selectedIndex = bestIndex
-        if (bestIndex >= 0) onMarkerTapped?.invoke(bestIndex)
-        return bestIndex
+        val hit = if (bestIndex >= 0) markers.getOrNull(bestIndex) else null
+        selectedMarkerId = hit?.id
+        hit?.let { onMarkerTapped?.invoke(it) }
+        return hit
     }
-
-    fun setSelectedIndex(index: Int) { selectedIndex = index }
 
     // ════════════════════════════════════════════════════════════════════════
     // Colour helpers
     // ════════════════════════════════════════════════════════════════════════
 
-    private fun quakeColor(quake: Earthquake): Triple<Float, Float, Float> =
-        if (markerColorByMagnitude) magnitudeColorFloat(quake.mag)
-        else depthColorFloat(quake.depth)
-
-    private fun magnitudeColorFloat(mag: Double) = when {
-        mag < 5.0 -> Triple(0.30f, 0.69f, 0.31f)   // green
-        mag < 6.0 -> Triple(1.00f, 0.92f, 0.23f)   // yellow
-        mag < 7.0 -> Triple(1.00f, 0.60f, 0.00f)   // orange
-        mag < 8.0 -> Triple(1.00f, 0.34f, 0.13f)   // deep-orange
-        else       -> Triple(1.00f, 0.09f, 0.27f)   // red
-    }
-
-    private fun depthColorFloat(depth: Double) = when {
-        depth < 70.0  -> Triple(1.0f, 0.27f, 0.27f)   // red  – shallow
-        depth < 300.0 -> Triple(1.0f, 0.53f, 0.00f)   // orange – mid
-        else           -> Triple(0.27f, 0.53f, 1.0f)  // blue – deep
+    /** Unpacks a 0xAARRGGBB packed integer to three 0..1 floats for GL. */
+    private fun unpackArgb(argb: Int): Triple<Float, Float, Float> {
+        val r = ((argb shr 16) and 0xFF) / 255f
+        val g = ((argb shr  8) and 0xFF) / 255f
+        val b = ( argb         and 0xFF) / 255f
+        return Triple(r, g, b)
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -850,20 +856,29 @@ class GlobeRenderer(private val appContext: android.content.Context) : GLSurface
     }
 
     /**
-     * Real-time subsolar direction in eye/world space.
-     * Camera has identity rotation so eye space == world space for directions.
-     * Coordinate frame: Y=north, lon=0/lat=0 → (1,0,0), lon=90/lat=0 → (0,0,1).
+     * Camera-relative diffuse light — fixed in world space behind the camera
+     * so the visible hemisphere is always lit no matter how the user rotates.
+     * Slightly above (+Y) so there's a faint top-down highlight.
      */
-    private fun computeSunDirectionEyeSpace(): FloatArray {
+    private fun computeViewLightDirection(): FloatArray {
+        val len = sqrt(0.35f * 0.35f + 1f)
+        return floatArrayOf(0f, 0.35f / len, 1f / len)
+    }
+
+    /**
+     * Real subsolar direction in world space, computed from current UTC.
+     * Drives the *night-darkening overlay* only — not the diffuse — so the
+     * visible side stays readable even on the UTC night hemisphere, but you
+     * can still see where the terminator actually is on Earth right now.
+     */
+    private fun computeUtcSunDirection(): FloatArray {
         val cal  = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
         val utcH = cal.get(java.util.Calendar.HOUR_OF_DAY) + cal.get(java.util.Calendar.MINUTE) / 60.0
         val doy  = cal.get(java.util.Calendar.DAY_OF_YEAR)
-        // Subsolar longitude: at UTC 12:00 the sun is directly over lon=0°
         val sunLon = Math.toRadians((12.0 - utcH) * 15.0)
-        // Solar declination varies ±23.45° over the year
         val sunLat = Math.toRadians(-23.45 * cos(2.0 * Math.PI * (doy + 10) / 365.25))
-        // Same axis convention as latLonToXYZ — negate X so the subsolar point
-        // lines up with the day-side of the geometry.
+        // Same axis convention as latLonToXYZ (negated X) so subsolar lat/lon
+        // lines up with the corresponding model-space point.
         return floatArrayOf(
             (-cos(sunLat) * cos(sunLon)).toFloat(),
             sin(sunLat).toFloat(),

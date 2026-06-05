@@ -277,7 +277,7 @@ fun SettingsScreen(
                         fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "QuakeSphere uses live data from the USGS Earthquake Hazards Program. " +
+                        "QuakeStation uses live data from the USGS Earthquake Hazards Program. " +
                         "Data is updated in near real-time and covers global seismic events.",
                         color = TextSecondary, fontSize = 13.sp, lineHeight = 20.sp
                     )

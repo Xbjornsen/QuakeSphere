@@ -54,6 +54,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.quakesphere.domain.model.DepthCategory
 import com.quakesphere.domain.model.Earthquake
+import com.quakesphere.globe.GlobeView
 import com.quakesphere.ui.theme.DepthDeep
 import com.quakesphere.ui.theme.DepthIntermediate
 import com.quakesphere.ui.theme.DepthShallow
@@ -94,20 +95,33 @@ fun GlobeScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // Full-screen Globe
+        // Full-screen Globe — consumes the :globe library's public API only.
         AndroidView(
             factory = { context ->
                 GlobeView(context).apply {
-                    onEarthquakeTapped = { index -> viewModel.selectEarthquake(index) }
+                    onMarkerClick = { marker -> viewModel.selectEarthquakeById(marker.id) }
                 }
             },
             update = { view ->
-                view.renderer.updateEarthquakes(uiState.earthquakes)
-                view.renderer.updateSwarms(uiState.swarms)
-                view.showContinentLines     = uiState.displaySettings.showContinentLines
-                view.showStars              = uiState.displaySettings.showStars
-                view.autoRotate             = uiState.displaySettings.autoRotate
-                view.markerColorByMagnitude = uiState.displaySettings.markerColorByMagnitude
+                val swarmIds = uiState.swarms
+                    .flatMap { s -> s.events.map { it.id } }
+                    .toSet()
+                val colorByMag = uiState.displaySettings.markerColorByMagnitude
+
+                view.setMarkers(EarthquakeMapper.toMarkers(
+                    earthquakes = uiState.earthquakes,
+                    swarmEventIds = swarmIds,
+                    colorByMagnitude = colorByMag
+                ))
+                view.setStacks(EarthquakeMapper.toStacks(uiState.swarms, colorByMag))
+                view.setRipples(EarthquakeMapper.toRipples(uiState.earthquakes))
+                view.setSelectedMarker(uiState.selectedEarthquake?.id)
+
+                view.displaySettings = com.quakesphere.globe.GlobeDisplaySettings(
+                    showContinentLines = uiState.displaySettings.showContinentLines,
+                    showStars          = uiState.displaySettings.showStars,
+                    autoRotate         = uiState.displaySettings.autoRotate
+                )
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -128,7 +142,7 @@ fun GlobeScreen(
                 // Title block
                 Column {
                     Text(
-                        text = "QuakeSphere",
+                        text = "QuakeStation",
                         color = TextPrimary,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold

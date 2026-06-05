@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">QuakeSphere</string>
-    <string name="globe_screen_title">QuakeSphere</string>
+    <string name="app_name">QuakeStation</string>
+    <string name="globe_screen_title">QuakeStation</string>
     <string name="list_screen_title">Earthquake List</string>
     <string name="detail_screen_title">Earthquake Details</string>
     <string name="settings_screen_title">Settings</string>
@@ -25,5 +25,5 @@
     <string name="settings_notification_threshold">Notification Threshold</string>
     <string name="settings_notifications_enabled">Enable Notifications</string>
     <string name="settings_sync_interval">Sync Interval</string>
-    <string name="data_source_info">QuakeSphere uses live data from the USGS Earthquake Hazards Program. Data is updated in near real-time and covers global seismic events.</string>
+    <string name="data_source_info">QuakeStation uses live data from the USGS Earthquake Hazards Program. Data is updated in near real-time and covers global seismic events.</string>
 </resources>
