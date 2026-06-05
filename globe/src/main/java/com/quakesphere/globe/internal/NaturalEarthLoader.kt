@@ -83,15 +83,30 @@ object NaturalEarthLoader {
             // Skip the duplicate closing point that GeoJSON rings always carry
             val ringPoints = ring.size() - 1
 
-            // Detect antimeridian-crossing rings (Russia, Fiji, etc.) and split
-            // so the earcut runs in a stable 360° span without giant fake triangles.
+            // Detect antimeridian-crossing rings (Russia, Fiji, etc.) for the
+            // outline pass, which still needs to know where to cut its line
+            // segments so they don't stretch halfway around the planet.
             val splitSegments = splitOnAntimeridian(ring, ringPoints)
-            // For our purposes, we just push every vertex; the splits below
-            // are used only for the outline pass.
-            for (i in 0 until ringPoints) {
+
+            // For the FILL triangulation, "unwrap" longitudes so each
+            // consecutive vertex differs from its predecessor by less than
+            // 180°. Without this, Russia's Kamchatka coast jumps from
+            // lon≈179 to lon≈-179 (358° apart in 2D), earcut sees a
+            // degenerate polygon and produces a hexagonal lattice of holes.
+            // The chosen representations may end up outside [-180,180] but
+            // that's fine — cos/sin are periodic when we project to XYZ.
+            var prevLon = ring.get(0).asJsonArray.get(0).asDouble
+            flatCoords.add(prevLon)
+            flatCoords.add(ring.get(0).asJsonArray.get(1).asDouble)
+            for (i in 1 until ringPoints) {
                 val pt = ring.get(i).asJsonArray
-                flatCoords.add(pt.get(0).asDouble)   // lon
-                flatCoords.add(pt.get(1).asDouble)   // lat
+                var lon = pt.get(0).asDouble
+                val lat = pt.get(1).asDouble
+                while (lon - prevLon >  180.0) lon -= 360.0
+                while (lon - prevLon < -180.0) lon += 360.0
+                flatCoords.add(lon)
+                flatCoords.add(lat)
+                prevLon = lon
             }
 
             // Outlines: emit one line segment per consecutive vertex pair, but
