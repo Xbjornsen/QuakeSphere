@@ -23,12 +23,16 @@ import kotlin.math.sin
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -163,8 +167,8 @@ fun GlobeScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // ── Overlay column (header + legend) ─────────────────────────────────
-        Column(modifier = Modifier.fillMaxSize()) {
+        // ── Top overlay column (header + highlight pill) ─────────────────────
+        Column(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
 
             // ── App header (status-bar-aware) ─────────────────────────────────
             Row(
@@ -294,7 +298,7 @@ fun GlobeScreen(
                 }
             }
 
-            // ── North indicator ───────────────────────────────────────────
+            // ── North indicator (stays just under the header pill) ─────────
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -303,30 +307,28 @@ fun GlobeScreen(
             ) {
                 PoleLabel("N", Color(0xFFCCE8FF))
             }
-
-            Spacer(Modifier.weight(1f))
-
-            // ── South indicator ───────────────────────────────────────────
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                PoleLabel("S", Color(0xFFAAD4FF))
-            }
-
-            // ── Legend ───────────────────────────────────────────────────────
-            MagnitudeLegend(
-                colorByMagnitude = uiState.displaySettings.markerColorByMagnitude,
-                modifier = Modifier
-                    .align(Alignment.Start)
-                    .padding(
-                        start  = 12.dp,
-                        bottom = if (uiState.selectedEarthquake != null) 220.dp else 16.dp
-                    )
-            )
         }
+
+        // ── South indicator (anchored to the bottom independently of any
+        //    bottom-sheet card, so opening the detail/swarm popup does not
+        //    push it up into the middle of the globe). ────────────────────
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            PoleLabel("S", Color(0xFFAAD4FF))
+        }
+
+        // ── Legend (anchored bottom-start, independent of bottom sheets) ──
+        MagnitudeLegend(
+            colorByMagnitude = uiState.displaySettings.markerColorByMagnitude,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 12.dp, bottom = 40.dp)
+        )
 
         // ── Selected earthquake bottom sheet ─────────────────────────────────
         AnimatedVisibility(
@@ -475,26 +477,43 @@ fun MagnitudeLegend(
     colorByMagnitude: Boolean,
     modifier: Modifier = Modifier
 ) {
+    var expanded by remember { mutableStateOf(false) }
     Card(
-        modifier = modifier,
+        modifier = modifier.clickable { expanded = !expanded },
         colors   = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.70f)),
         shape    = RoundedCornerShape(8.dp)
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
-            if (colorByMagnitude) {
-                Text("MAGNITUDE", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(4.dp))
-                LegendItem(color = MagMinor,    label = "< M5   Minor")
-                LegendItem(color = MagModerate, label = "M5-6  Moderate")
-                LegendItem(color = MagStrong,   label = "M6-7  Strong")
-                LegendItem(color = MagMajor,    label = "M7-8  Major")
-                LegendItem(color = MagGreat,    label = "M8+   Great")
-            } else {
-                Text("DEPTH", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(4.dp))
-                LegendItem(color = DepthShallow,      label = "Shallow  <70 km")
-                LegendItem(color = DepthIntermediate, label = "Mid  70-300 km")
-                LegendItem(color = DepthDeep,         label = "Deep  >300 km")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (colorByMagnitude) "MAGNITUDE" else "DEPTH",
+                    color = TextSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse legend" else "Expand legend",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            AnimatedVisibility(visible = expanded) {
+                Column {
+                    Spacer(Modifier.height(4.dp))
+                    if (colorByMagnitude) {
+                        LegendItem(color = MagMinor,    label = "< M5   Minor")
+                        LegendItem(color = MagModerate, label = "M5-6  Moderate")
+                        LegendItem(color = MagStrong,   label = "M6-7  Strong")
+                        LegendItem(color = MagMajor,    label = "M7-8  Major")
+                        LegendItem(color = MagGreat,    label = "M8+   Mega")
+                    } else {
+                        LegendItem(color = DepthShallow,      label = "Shallow  <70 km")
+                        LegendItem(color = DepthIntermediate, label = "Mid  70-300 km")
+                        LegendItem(color = DepthDeep,         label = "Deep  >300 km")
+                    }
+                }
             }
         }
     }
@@ -550,8 +569,38 @@ fun SwarmInfoCard(
                 )
             }
             Spacer(Modifier.height(10.dp))
+            // Sort toggle: magnitude (default) ↔ time.
+            var sortByTime by remember(swarm.id) { mutableStateOf(false) }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Sort:",
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+                Spacer(Modifier.width(8.dp))
+                SortChip(
+                    label = "Magnitude",
+                    icon = Icons.Default.TrendingUp,
+                    selected = !sortByTime,
+                    onClick = { sortByTime = false }
+                )
+                Spacer(Modifier.width(6.dp))
+                SortChip(
+                    label = "Time",
+                    icon = Icons.Default.AccessTime,
+                    selected = sortByTime,
+                    onClick = { sortByTime = true }
+                )
+            }
+            val orderedEvents = if (sortByTime)
+                swarm.events.sortedByDescending { it.time }
+            else
+                swarm.events.sortedByDescending { it.mag }
             // Mini-table: tap a row to focus that quake.
-            swarm.events.take(8).forEach { event ->
+            orderedEvents.take(8).forEach { event ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -588,10 +637,10 @@ fun SwarmInfoCard(
                     )
                 }
             }
-            if (swarm.events.size > 8) {
+            if (orderedEvents.size > 8) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text     = "+ ${swarm.events.size - 8} more",
+                    text     = "+ ${orderedEvents.size - 8} more",
                     color    = TextSecondary,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(start = 38.dp)
@@ -674,6 +723,34 @@ fun PoleLabel(label: String, tint: Color) {
             fontSize   = 13.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 2.sp
+        )
+    }
+}
+
+@Composable
+fun SortChip(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val bg = if (selected) ElectricBlue.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.05f)
+    val fg = if (selected) ElectricBlue else TextSecondary
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .clickable { onClick() }
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(imageVector = icon, contentDescription = null, tint = fg, modifier = Modifier.size(12.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = label,
+            color = fg,
+            fontSize = 11.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
         )
     }
 }
