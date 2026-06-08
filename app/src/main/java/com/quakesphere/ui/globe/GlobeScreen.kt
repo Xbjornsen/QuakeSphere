@@ -24,8 +24,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -68,6 +71,7 @@ import com.quakesphere.ui.theme.MagMinor
 import com.quakesphere.ui.theme.MagModerate
 import com.quakesphere.ui.theme.MagStrong
 import com.quakesphere.ui.theme.SurfaceCard
+import com.quakesphere.ui.theme.SurfaceVariant
 import com.quakesphere.ui.theme.TextPrimary
 import com.quakesphere.ui.theme.TextSecondary
 import java.text.SimpleDateFormat
@@ -97,6 +101,14 @@ fun GlobeScreen(
     // imperative UI affordance) can call flyTo on it directly.
     var globeViewRef by remember { mutableStateOf<GlobeView?>(null) }
 
+    // Replay: each time the index advances, fly the camera to that quake.
+    LaunchedEffect(uiState.replay.isActive, uiState.replay.index) {
+        if (!uiState.replay.isActive) return@LaunchedEffect
+        val chrono = uiState.earthquakes.sortedBy { it.time }
+        val q = chrono.getOrNull(uiState.replay.index) ?: return@LaunchedEffect
+        globeViewRef?.flyTo(com.quakesphere.globe.GeoCoord(q.lat, q.lon))
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -117,20 +129,35 @@ fun GlobeScreen(
                     .toSet()
                 val colorByMag = uiState.displaySettings.markerColorByMagnitude
 
+                // During replay we feed the renderer only the quakes that have
+                // "happened" so far in the time-lapse — cumulative oldest-first
+                // reveal. Swarms and ripples follow the same trimmed list so
+                // the geographic story builds up coherently.
+                val replay = uiState.replay
+                val chronological = uiState.earthquakes.sortedBy { it.time }
+                val activeQuakes = if (replay.isActive) {
+                    chronological.take((replay.index + 1).coerceAtMost(chronological.size))
+                } else uiState.earthquakes
+
                 view.setMarkers(EarthquakeMapper.toMarkers(
-                    earthquakes = uiState.earthquakes,
+                    earthquakes = activeQuakes,
                     swarmEventIds = swarmIds,
                     colorByMagnitude = colorByMag
                 ))
-                view.setStacks(EarthquakeMapper.toStacks(uiState.swarms, colorByMag))
-                view.setRipples(EarthquakeMapper.toRipples(uiState.earthquakes))
+                view.setStacks(EarthquakeMapper.toStacks(
+                    if (replay.isActive) emptyList() else uiState.swarms, colorByMag
+                ))
+                view.setRipples(EarthquakeMapper.toRipples(activeQuakes))
                 view.setSelectedMarker(uiState.selectedEarthquake?.id)
 
                 view.displaySettings = com.quakesphere.globe.GlobeDisplaySettings(
                     showContinentLines = uiState.displaySettings.showContinentLines,
                     showStars          = uiState.displaySettings.showStars,
-                    autoRotate         = uiState.displaySettings.autoRotate,
-                    showTectonicPlates = uiState.displaySettings.showTectonicPlates
+                    // Auto-rotate forced off during replay — it would fight
+                    // every flyTo() and confuse the time-lapse.
+                    autoRotate         = uiState.displaySettings.autoRotate && !replay.isActive,
+                    showTectonicPlates = uiState.displaySettings.showTectonicPlates,
+                    showHistoricTrends = uiState.displaySettings.showHistoricTrends
                 )
             },
             modifier = Modifier.fillMaxSize()
@@ -187,6 +214,18 @@ fun GlobeScreen(
                             strokeWidth = 2.dp
                         )
                         Spacer(Modifier.width(6.dp))
+                    }
+                    // Play / Stop replay
+                    IconButton(onClick = {
+                        if (uiState.replay.isActive) viewModel.stopReplay()
+                        else viewModel.startReplay()
+                    }) {
+                        Icon(
+                            imageVector = if (uiState.replay.isActive)
+                                Icons.Default.Stop else Icons.Default.PlayArrow,
+                            contentDescription = if (uiState.replay.isActive) "Stop replay" else "Replay quakes",
+                            tint = if (uiState.replay.isActive) MagStrong else ElectricBlue
+                        )
                     }
                     IconButton(onClick = { viewModel.syncEarthquakes() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = ElectricBlue)
@@ -325,10 +364,107 @@ fun GlobeScreen(
             }
         }
 
+        // ── Replay progress strip ────────────────────────────────────────────
+        AnimatedVisibility(
+            visible = uiState.replay.isActive,
+            enter   = slideInVertically(initialOffsetY = { it }),
+            exit    = slideOutVertically(targetOffsetY = { it }),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            ReplayStrip(
+                replay        = uiState.replay,
+                currentQuake  = uiState.earthquakes.sortedBy { it.time }
+                    .getOrNull(uiState.replay.index),
+                onPauseToggle = { viewModel.togglePauseReplay() },
+                onStop        = { viewModel.stopReplay() },
+                modifier      = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+        }
+
         SnackbarHost(
             hostState = snackbarHostState,
             modifier  = Modifier.align(Alignment.BottomCenter)
         )
+    }
+}
+
+@Composable
+fun ReplayStrip(
+    replay: ReplayState,
+    currentQuake: Earthquake?,
+    onPauseToggle: () -> Unit,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    androidx.compose.material3.Card(
+        modifier  = modifier.fillMaxWidth(),
+        colors    = androidx.compose.material3.CardDefaults.cardColors(containerColor = SurfaceCard),
+        shape     = RoundedCornerShape(16.dp),
+        elevation = androidx.compose.material3.CardDefaults.cardElevation(8.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text       = if (replay.isPaused) "PAUSED" else "REPLAYING",
+                    color      = if (replay.isPaused) Color(0xFFFFBB33) else ElectricBlue,
+                    fontSize   = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "${replay.index + 1} / ${replay.total}",
+                    color = TextPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onPauseToggle) {
+                    Icon(
+                        imageVector = if (replay.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        contentDescription = if (replay.isPaused) "Resume" else "Pause",
+                        tint = ElectricBlue
+                    )
+                }
+                IconButton(onClick = onStop) {
+                    Icon(Icons.Default.Stop, contentDescription = "Stop replay", tint = MagStrong)
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { (replay.index + 1).toFloat() / replay.total.coerceAtLeast(1) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+                color = ElectricBlue,
+                trackColor = SurfaceVariant
+            )
+            currentQuake?.let { q ->
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "M${String.format("%.1f", q.mag)}",
+                        color = magnitudeColor(q.mag),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text     = q.place,
+                        color    = TextPrimary,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text     = formatTimeAgo(q.time),
+                        color    = TextSecondary,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
     }
 }
 

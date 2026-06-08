@@ -84,6 +84,7 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
             renderer.showStars          = value.showStars
             renderer.autoRotate         = value.autoRotate
             renderer.showTectonicPlates = value.showTectonicPlates
+            renderer.showHistoricTrends = value.showHistoricTrends
         }
 
     // ── Touch handling ───────────────────────────────────────────────────────

@@ -53,11 +53,12 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     private val ZOOM_LERP     = 0.20f
 
     // ── GL programs ──────────────────────────────────────────────────────────
-    private var globeProgram  = 0
-    private var markerProgram = 0
-    private var starProgram   = 0
-    private var lineProgram   = 0
-    private var fillProgram   = 0
+    private var globeProgram   = 0
+    private var markerProgram  = 0
+    private var starProgram    = 0
+    private var lineProgram    = 0
+    private var fillProgram    = 0
+    private var heatmapProgram = 0
 
     // ── Globe mesh ───────────────────────────────────────────────────────────
     private var sphereVertexBuffer: FloatBuffer? = null
@@ -80,6 +81,16 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     private var plateLineBuffer: FloatBuffer? = null
     private var plateLineVertexCount = 0
 
+    // ── Historic heatmap (single-channel density texture overlaid on sphere) ─
+    // The grid is generated on a background thread the first time the renderer
+    // surfaces, then uploaded to GL on the next draw frame after it's ready.
+    // That keeps the ~1-3 s GeoJSON parse + Gaussian splat off the critical
+    // path to first frame — the globe paints immediately, heatmap appears a
+    // beat later when the user has enabled the toggle.
+    private var heatmapTextureId = 0
+    @Volatile private var heatmapPixelsReady: ByteArray? = null
+    @Volatile private var heatmapBuildStarted = false
+
     @Volatile var lastMvpMatrix: FloatArray = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
 
     // ── Markers (the flat marker layer) ──────────────────────────────────────
@@ -99,6 +110,7 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     @Volatile var showStars          = true
     @Volatile var autoRotate         = false
     @Volatile var showTectonicPlates = false
+    @Volatile var showHistoricTrends = false
 
     // ── Interaction tracking (used to pause auto-rotate after touches) ───────
     @Volatile private var lastInteractionMs = 0L
@@ -273,6 +285,46 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         void main() { gl_FragColor = uLineColor; }
     """.trimIndent()
 
+    /**
+     * Heatmap pass reuses the sphere mesh and its (u,v) coords.
+     * v: pole-to-pole 0..1, u: 0..1 around the equator.
+     */
+    private val HEATMAP_VERTEX_SHADER = """
+        uniform mat4 uMVPMatrix;
+        attribute vec4 aPosition;
+        attribute vec2 aTexCoord;
+        varying vec2 vTexCoord;
+        void main() {
+            vTexCoord = aTexCoord;
+            gl_Position = uMVPMatrix * aPosition;
+        }
+    """.trimIndent()
+
+    /**
+     * Samples the density texture, maps the 0..1 intensity through a warm
+     * heatmap colour ramp, and outputs with alpha proportional to intensity
+     * so faint zones stay subtle and the busy ones glow.
+     */
+    private val HEATMAP_FRAGMENT_SHADER = """
+        precision mediump float;
+        uniform sampler2D uHeatmap;
+        varying vec2 vTexCoord;
+        void main() {
+            float v = texture2D(uHeatmap, vTexCoord).r;
+            if (v < 0.04) discard;
+            // Three-stop warm ramp: cool yellow → orange → red.
+            vec3 c1 = vec3(1.00, 0.90, 0.30);   // low  – pale yellow
+            vec3 c2 = vec3(1.00, 0.50, 0.10);   // mid  – orange
+            vec3 c3 = vec3(1.00, 0.10, 0.05);   // high – red
+            vec3 color = v < 0.5
+                ? mix(c1, c2, v * 2.0)
+                : mix(c2, c3, (v - 0.5) * 2.0);
+            // Alpha climbs from 0.18 at the threshold to 0.85 at the peak.
+            float a = 0.18 + v * 0.67;
+            gl_FragColor = vec4(color, a);
+        }
+    """.trimIndent()
+
     // ════════════════════════════════════════════════════════════════════════
     // GLSurfaceView.Renderer
     // ════════════════════════════════════════════════════════════════════════
@@ -288,11 +340,15 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         starProgram   = createProgram(STAR_VERTEX_SHADER,   STAR_FRAGMENT_SHADER)
         lineProgram   = createProgram(LINE_VERTEX_SHADER,   LINE_FRAGMENT_SHADER)
         fillProgram   = createProgram(FILL_VERTEX_SHADER,   FILL_FRAGMENT_SHADER)
+        heatmapProgram = createProgram(HEATMAP_VERTEX_SHADER, HEATMAP_FRAGMENT_SHADER)
 
         setupGlobe()
         setupStarField()
         setupContinents()
         setupTectonicPlates()
+        // Heatmap is built on a background thread; the texture upload happens
+        // in onDrawFrame when the pixels are ready. See [maybeUploadHeatmap].
+        startHeatmapBuild()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -359,6 +415,10 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         lastMvpMatrix = mvpMatrix.copyOf()
 
         drawGlobe()
+        if (showHistoricTrends) {
+            maybeUploadHeatmap()
+            drawHeatmap()                                       // sit over ocean, under land
+        }
         drawContinentFills()                                    // filled land before outlines
         if (showContinentLines) drawContinentLines()
         if (showTectonicPlates) drawTectonicPlates()
@@ -460,6 +520,61 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
             .apply { put(verts); position(0) }
     }
 
+    /**
+     * Kick off the density-grid build on a low-priority background thread.
+     * When [HeatmapGenerator.build] returns we stash the bytes; the GL thread
+     * picks them up in [maybeUploadHeatmap] on the next draw and creates the
+     * texture there. This keeps the GL surface-create path snappy (otherwise
+     * the user sees a blank screen for several seconds before the globe
+     * appears).
+     */
+    private fun startHeatmapBuild() {
+        if (heatmapBuildStarted) return
+        heatmapBuildStarted = true
+        Thread({
+            try { heatmapPixelsReady = HeatmapGenerator.build(appContext) }
+            catch (_: Throwable) { /* leave null — heatmap simply won't draw */ }
+        }, "quakesphere-heatmap").apply {
+            priority = Thread.MIN_PRIORITY
+            isDaemon = true
+            start()
+        }
+    }
+
+    /**
+     * Called from the GL thread once per frame while the heatmap is enabled.
+     * If the background build has finished and we haven't uploaded yet, create
+     * the GL texture and consume the pixel buffer. Cheap no-op after that.
+     */
+    private fun maybeUploadHeatmap() {
+        if (heatmapTextureId != 0) return
+        val pixels = heatmapPixelsReady ?: return
+        heatmapPixelsReady = null
+
+        val buf = ByteBuffer.allocateDirect(pixels.size)
+            .order(ByteOrder.nativeOrder())
+            .apply { put(pixels); position(0) }
+
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        heatmapTextureId = ids[0]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, heatmapTextureId)
+
+        // Single-channel grayscale density. GL ES 2 doesn't have GL_RED, so we
+        // upload as GL_LUMINANCE which exposes the value in the .r channel.
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0,
+            GLES20.GL_LUMINANCE,
+            HeatmapGenerator.WIDTH, HeatmapGenerator.HEIGHT, 0,
+            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, buf
+        )
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        // Wrap horizontally so seam at lon=±180 doesn't show.
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_REPEAT)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // Draw methods
     // ════════════════════════════════════════════════════════════════════════
@@ -493,6 +608,46 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         Matrix.setIdentityM(modelMatrix, 0)
         Matrix.rotateM(modelMatrix, 0, rotationX, 1f, 0f, 0f)
         Matrix.rotateM(modelMatrix, 0, rotationY, 0f, 1f, 0f)
+    }
+
+    /**
+     * Paint the precomputed seismic-density heatmap over the sphere. Reuses
+     * the sphere mesh's UVs so it stays perfectly aligned with the ocean
+     * underneath. Blended additively so it tints rather than replaces.
+     */
+    private fun drawHeatmap() {
+        if (heatmapTextureId == 0) return
+        GLES20.glUseProgram(heatmapProgram)
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        // Avoid z-fighting with the ocean — draw with depth-test on but
+        // depth-write off so subsequent fills (continents) still win.
+        GLES20.glDepthMask(false)
+
+        val mvpH = GLES20.glGetUniformLocation(heatmapProgram, "uMVPMatrix")
+        val texU = GLES20.glGetUniformLocation(heatmapProgram, "uHeatmap")
+        val posH = GLES20.glGetAttribLocation(heatmapProgram,  "aPosition")
+        val texA = GLES20.glGetAttribLocation(heatmapProgram,  "aTexCoord")
+
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, heatmapTextureId)
+        GLES20.glUniform1i(texU, 0)
+        GLES20.glUniformMatrix4fv(mvpH, 1, false, mvpMatrix, 0)
+
+        val STRIDE = 32 // matches sphere vertex layout
+        sphereVertexBuffer?.position(0)
+        GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, STRIDE, sphereVertexBuffer)
+        GLES20.glEnableVertexAttribArray(posH)
+        sphereVertexBuffer?.position(6)
+        GLES20.glVertexAttribPointer(texA, 2, GLES20.GL_FLOAT, false, STRIDE, sphereVertexBuffer)
+        GLES20.glEnableVertexAttribArray(texA)
+
+        GLES20.glDrawElements(GLES20.GL_TRIANGLES, sphereIndexCount,
+            GLES20.GL_UNSIGNED_SHORT, sphereIndexBuffer)
+
+        GLES20.glDisableVertexAttribArray(posH)
+        GLES20.glDisableVertexAttribArray(texA)
+        GLES20.glDepthMask(true)
     }
 
     private fun drawGlobe() {

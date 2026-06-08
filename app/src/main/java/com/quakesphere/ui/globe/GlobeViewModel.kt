@@ -32,6 +32,7 @@ data class GlobeDisplaySettings(
     val showStars:              Boolean = true,
     val autoRotate:             Boolean = false,
     val showTectonicPlates:     Boolean = false,
+    val showHistoricTrends:     Boolean = false,
     val markerColorByMagnitude: Boolean = false,
     val useMiles:               Boolean = false
 )
@@ -44,7 +45,23 @@ data class GlobeUiState(
     val isLoading:       Boolean               = false,
     val errorMessage:    String?               = null,
     val minMagnitude:    Double                = 5.0,
-    val displaySettings: GlobeDisplaySettings  = GlobeDisplaySettings()
+    val displaySettings: GlobeDisplaySettings  = GlobeDisplaySettings(),
+    val replay:          ReplayState           = ReplayState()
+)
+
+/**
+ * Per-quake time-lapse playback state.
+ * @property isActive   true while a replay is in progress (whether or not paused)
+ * @property isPaused   true if the user has hit pause mid-replay
+ * @property index      0-based current position in the chronologically-sorted quake list
+ * @property total      total number of quakes in this replay (cached so the UI can
+ *                       show "5 / 42" without recomputing)
+ */
+data class ReplayState(
+    val isActive: Boolean = false,
+    val isPaused: Boolean = false,
+    val index:    Int     = 0,
+    val total:    Int     = 0
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -62,6 +79,7 @@ class GlobeViewModel @Inject constructor(
         val KEY_SHOW_STARS           = booleanPreferencesKey("show_stars")
         val KEY_AUTO_ROTATE          = booleanPreferencesKey("auto_rotate")
         val KEY_SHOW_TECTONIC_PLATES = booleanPreferencesKey("show_tectonic_plates")
+        val KEY_SHOW_HISTORIC_TRENDS = booleanPreferencesKey("show_historic_trends")
         val KEY_MARKER_COLOR_MODE    = stringPreferencesKey("marker_color_mode")
         val KEY_SWARM_MIN_EVENTS     = androidx.datastore.preferences.core.intPreferencesKey("swarm_min_events")
         val KEY_TIME_RANGE           = stringPreferencesKey("time_range")
@@ -108,6 +126,7 @@ class GlobeViewModel @Inject constructor(
                             showStars              = prefs[KEY_SHOW_STARS] ?: true,
                             autoRotate             = prefs[KEY_AUTO_ROTATE] ?: false,
                             showTectonicPlates     = prefs[KEY_SHOW_TECTONIC_PLATES] ?: false,
+                            showHistoricTrends     = prefs[KEY_SHOW_HISTORIC_TRENDS] ?: false,
                             markerColorByMagnitude = (prefs[KEY_MARKER_COLOR_MODE] ?: "depth") == "magnitude",
                             useMiles               = (prefs[KEY_DISTANCE_UNIT] ?: "km") == "miles"
                         ),
@@ -176,4 +195,60 @@ class GlobeViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(selectedSwarmId = id)
     }
     fun clearError()     { _uiState.value = _uiState.value.copy(errorMessage = null) }
+
+    // ── Replay ──────────────────────────────────────────────────────────────
+
+    private var replayJob: kotlinx.coroutines.Job? = null
+
+    /** Cancels any running replay and clears its state. */
+    fun stopReplay() {
+        replayJob?.cancel()
+        replayJob = null
+        _uiState.value = _uiState.value.copy(replay = ReplayState())
+    }
+
+    /** Pauses/resumes the running replay. No-op if no replay is active. */
+    fun togglePauseReplay() {
+        val r = _uiState.value.replay
+        if (!r.isActive) return
+        _uiState.value = _uiState.value.copy(replay = r.copy(isPaused = !r.isPaused))
+    }
+
+    /**
+     * Plays back the current quake list in chronological order, advancing one
+     * quake every [intervalMs] (default 1500 ms). The screen layer is expected
+     * to take .replay.index and:
+     *   - render only quakes up to and including that index (cumulative reveal),
+     *   - fly the camera to the new quake each step.
+     *
+     * Calling start a second time while one is running cancels and restarts.
+     */
+    fun startReplay(intervalMs: Long = 1500L) {
+        val quakes = _uiState.value.earthquakes
+        if (quakes.isEmpty()) return
+        replayJob?.cancel()
+        _uiState.value = _uiState.value.copy(
+            replay = ReplayState(isActive = true, isPaused = false, index = 0, total = quakes.size)
+        )
+        replayJob = viewModelScope.launch {
+            // The first quake is "shown" the instant we start, so the first
+            // delay happens *after* index=0 paints. Loop emits the next index
+            // after each interval, terminating once we reach the end.
+            for (i in 1 until quakes.size) {
+                var waited = 0L
+                while (waited < intervalMs) {
+                    kotlinx.coroutines.delay(50L)
+                    val r = _uiState.value.replay
+                    if (!r.isActive) return@launch  // stopReplay() called
+                    if (!r.isPaused) waited += 50L
+                }
+                _uiState.value = _uiState.value.copy(
+                    replay = _uiState.value.replay.copy(index = i)
+                )
+            }
+            // Done — leave the final frame on screen for a beat, then close.
+            kotlinx.coroutines.delay(2000L)
+            if (_uiState.value.replay.isActive) stopReplay()
+        }
+    }
 }

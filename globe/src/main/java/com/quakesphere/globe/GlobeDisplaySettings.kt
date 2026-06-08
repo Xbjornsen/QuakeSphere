@@ -16,5 +16,11 @@ data class GlobeDisplaySettings(
      * drawn over the globe in warm orange. Useful for relating quake
      * clusters to plate interactions.
      */
-    val showTectonicPlates: Boolean = false
+    val showTectonicPlates: Boolean = false,
+    /**
+     * When true, overlay a historic seismic-density heatmap on the ocean.
+     * Bright yellow→red zones are where significant quakes cluster
+     * geologically. Computed at first run from plate-boundary proximity.
+     */
+    val showHistoricTrends: Boolean = false
 )
