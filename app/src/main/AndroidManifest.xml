@@ -41,14 +41,20 @@
             </intent-filter>
         </receiver>
 
+        <!--
+            Remove the default WorkManagerInitializer that androidx.work adds via
+            its manifest, because QuakeSphereApp implements Configuration.Provider
+            for on-demand init (Hilt's HiltWorkerFactory is wired in at construct
+            time). Without this `tools:node="remove"`, lintVitalRelease fails the
+            release build with "RemoveWorkManagerInitializer".
+        -->
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"
-            android:exported="false"
             tools:node="merge">
             <meta-data
                 android:name="androidx.work.WorkManagerInitializer"
-                android:value="androidx.startup" />
+                tools:node="remove" />
         </provider>
 
     </application>
