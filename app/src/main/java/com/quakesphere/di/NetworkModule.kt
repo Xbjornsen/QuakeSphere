@@ -1,6 +1,8 @@
 package com.quakesphere.di
 
 import com.quakesphere.data.api.EarthquakeApiService
+import com.quakesphere.data.api.GitHubApi
+import javax.inject.Named
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -40,6 +42,7 @@ object NetworkModule {
 
     @Provides
     @Singleton
+    @Named("usgs")
     fun provideRetrofit(okHttpClient: OkHttpClient): Retrofit {
         return Retrofit.Builder()
             .baseUrl(BASE_URL)
@@ -50,7 +53,24 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideEarthquakeApiService(retrofit: Retrofit): EarthquakeApiService {
+    fun provideEarthquakeApiService(@Named("usgs") retrofit: Retrofit): EarthquakeApiService {
         return retrofit.create(EarthquakeApiService::class.java)
     }
+
+    /** Separate Retrofit for GitHub Releases — different base URL than USGS. */
+    @Provides
+    @Singleton
+    @Named("github")
+    fun provideGitHubRetrofit(okHttpClient: OkHttpClient): Retrofit {
+        return Retrofit.Builder()
+            .baseUrl("https://api.github.com/")
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    fun provideGitHubApi(@Named("github") retrofit: Retrofit): GitHubApi =
+        retrofit.create(GitHubApi::class.java)
 }

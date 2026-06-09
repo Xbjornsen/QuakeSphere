@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Needed for the in-app self-updater to launch the system package installer
+         on the downloaded APK. The user still has to confirm install. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".QuakeSphereApp"
@@ -48,6 +51,18 @@
             time). Without this `tools:node="remove"`, lintVitalRelease fails the
             release build with "RemoveWorkManagerInitializer".
         -->
+        <!-- FileProvider used to hand the downloaded update APK to the system
+             package installer via a content:// URI (mandatory since Nougat). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"

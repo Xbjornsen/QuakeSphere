@@ -72,6 +72,9 @@ android {
     }
     buildFeatures {
         compose = true
+        // BuildConfig is off by default in AGP 8+. We need it for VERSION_NAME
+        // so the in-app updater can compare against the latest GitHub release.
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"

@@ -92,9 +92,12 @@ fun GlobeScreen(
     onNavigateToList: () -> Unit,
     onNavigateToDetail: (String) -> Unit,
     onNavigateToSettings: () -> Unit,
-    viewModel: GlobeViewModel = hiltViewModel()
+    viewModel: GlobeViewModel = hiltViewModel(),
+    updateViewModel: com.quakesphere.update.UpdateViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val updateState by updateViewModel.state.collectAsState()
+    val downloadState by updateViewModel.downloader.state.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(uiState.errorMessage) {
@@ -290,6 +293,16 @@ fun GlobeScreen(
                         Icon(Icons.Default.Settings, contentDescription = "Settings", tint = TextPrimary)
                     }
                 }
+            }
+
+            // ── Update banner (visible only when there's a newer release) ──
+            updateState.available?.takeUnless { updateState.dismissed }?.let { info ->
+                UpdateBanner(
+                    version = info.version,
+                    downloadState = downloadState,
+                    onUpdate  = { updateViewModel.installNow() },
+                    onDismiss = { updateViewModel.dismiss() }
+                )
             }
 
             // ── Highlight pill (alternates LATEST ↔ BIGGEST) ───────────────
@@ -900,6 +913,88 @@ fun MagnitudeBadgeLarge(magnitude: Double) {
             color      = magnitudeTextColor(magnitude),
             fontWeight = FontWeight.Bold,
             fontSize   = 16.sp
+        )
+    }
+}
+
+/**
+ * Subtle banner that surfaces when a newer GitHub release is available.
+ * Tap "Update" → kicks off [com.quakesphere.update.UpdateDownloader] which
+ * downloads the APK via DownloadManager and fires the system installer
+ * intent when done. Tap ✕ → suppress for this session.
+ */
+@Composable
+fun UpdateBanner(
+    version: String,
+    downloadState: com.quakesphere.update.DownloadState,
+    onUpdate: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val busy = downloadState is com.quakesphere.update.DownloadState.Downloading
+    val ready = downloadState is com.quakesphere.update.DownloadState.Ready
+    val failed = downloadState is com.quakesphere.update.DownloadState.Failed
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF1F3A57).copy(alpha = 0.92f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text  = "⬆",
+            color = ElectricBlue,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "QuakeStation v$version available",
+                color = TextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+            Text(
+                text = when {
+                    busy   -> "Downloading…"
+                    ready  -> "Ready — open the installer prompt"
+                    failed -> "Download failed — tap to retry"
+                    else   -> "Tap Update to download and install"
+                },
+                color = TextSecondary,
+                fontSize = 11.sp,
+                maxLines = 1
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        if (busy) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = ElectricBlue,
+                strokeWidth = 2.dp
+            )
+        } else {
+            Text(
+                text = if (failed) "Retry" else "Update",
+                color = ElectricBlue,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onUpdate() }
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            )
+        }
+        Text(
+            text = "✕",
+            color = TextSecondary,
+            fontSize = 14.sp,
+            modifier = Modifier
+                .clickable { onDismiss() }
+                .padding(start = 4.dp, end = 2.dp, top = 2.dp, bottom = 2.dp)
         )
     }
 }

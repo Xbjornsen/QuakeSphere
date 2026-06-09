@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Stash downloaded update APKs under the app's external cache so they
+         get garbage-collected with the app and don't need WRITE_EXTERNAL_STORAGE. -->
+    <external-cache-path name="updates" path="updates/" />
+</paths>
