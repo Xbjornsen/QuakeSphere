@@ -172,10 +172,10 @@ fun SettingsScreen(
                 )
                 HorizontalDivider(color = SurfaceVariant)
                 ToggleRow(
-                    title    = "Historic Trends (beta)",
-                    subtitle = "Density of significant quakes over the last 30 years",
-                    checked  = s.showHistoricTrends,
-                    onCheckedChange = { viewModel.setShowHistoricTrends(it) }
+                    title    = "Seismic Activity",
+                    subtitle = "Warm: plate-boundary risk corridors · Cool: real M5+ in last 30d",
+                    checked  = s.showSeismicActivity,
+                    onCheckedChange = { viewModel.setShowSeismicActivity(it) }
                 )
                 HorizontalDivider(color = SurfaceVariant)
                 ToggleRow(

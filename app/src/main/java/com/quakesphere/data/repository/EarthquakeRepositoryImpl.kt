@@ -37,7 +37,7 @@ class EarthquakeRepositoryImpl @Inject constructor(
             val response = apiService.getEarthquakes(
                 minMagnitude = minMagnitude,
                 startTime    = startTimeIso,
-                limit        = 200
+                limit        = 2500
             )
             val entities = response.features.mapNotNull { feature ->
                 val coords = feature.geometry.coordinates

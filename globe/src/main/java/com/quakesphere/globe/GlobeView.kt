@@ -65,6 +65,13 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
     /** Replaces the ripple layer (animated expanding rings). */
     fun setRipples(ripples: List<RippleSpec>) { renderer.updateRipples(ripples) }
 
+    /**
+     * Replaces the live-activity overlay grid. Pass the bytes produced by
+     * `LiveActivityGenerator.build(...)`, or null to clear. Safe to call from
+     * any thread; the GL upload happens on the next frame.
+     */
+    fun setLiveActivityGrid(grid: ByteArray?) { renderer.setLiveActivityPixels(grid) }
+
     /** Marks one marker as "selected" (causes a soft pulse). Pass null to clear. */
     fun setSelectedMarker(id: String?) { renderer.setSelectedMarker(id) }
 
@@ -91,7 +98,7 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
             renderer.showStars          = value.showStars
             renderer.autoRotate         = value.autoRotate
             renderer.showTectonicPlates = value.showTectonicPlates
-            renderer.showHistoricTrends = value.showHistoricTrends
+            renderer.showSeismicActivity = value.showSeismicActivity
             renderer.showEquator        = value.showEquator
             renderer.showVolcanoes      = value.showVolcanoes
             renderer.showTopography     = value.showTopography

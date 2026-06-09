@@ -10,7 +10,10 @@ interface EarthquakeApiService {
     suspend fun getEarthquakes(
         @Query("minmagnitude") minMagnitude: Double = 5.0,
         @Query("starttime") startTime: String? = null,
-        @Query("limit") limit: Int = 200,
+        // USGS default sort is time-descending. With limit=200 a 30-day request
+        // returned only the most recent ~5 days; 2500 comfortably covers 30d
+        // at M5+ globally (~50/day) without abusing the API.
+        @Query("limit") limit: Int = 2500,
         @Query("format") format: String = "geojson",
         @Query("orderby") orderBy: String = "time"
     ): EarthquakeResponse

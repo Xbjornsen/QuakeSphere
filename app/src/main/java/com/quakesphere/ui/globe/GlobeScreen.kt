@@ -68,6 +68,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.quakesphere.domain.model.DepthCategory
 import com.quakesphere.domain.model.Earthquake
 import com.quakesphere.globe.GlobeView
+import com.quakesphere.globe.LiveActivityGenerator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.quakesphere.ui.theme.DepthDeep
 import com.quakesphere.ui.theme.DepthIntermediate
 import com.quakesphere.ui.theme.DepthShallow
@@ -126,6 +129,23 @@ fun GlobeScreen(
     // saw the bundled list and never updated.
     val currentlyActiveCount = remember(uiState.volcanicActivity) {
         uiState.volcanicActivity.map { it.volcanoName }.toSet().size
+    }
+
+    // ── Live-activity overlay ─────────────────────────────────────────────────
+    // Whenever the earthquake list or the toggle changes, rebuild the live
+    // density grid off the UI thread and push it to the renderer. When the
+    // toggle is off we send null so the GPU texture is dropped.
+    LaunchedEffect(uiState.earthquakes, uiState.displaySettings.showSeismicActivity) {
+        val view = globeViewRef ?: return@LaunchedEffect
+        if (!uiState.displaySettings.showSeismicActivity) {
+            view.setLiveActivityGrid(null)
+            return@LaunchedEffect
+        }
+        val events = uiState.earthquakes.map {
+            LiveActivityGenerator.Event(it.lat.toFloat(), it.lon.toFloat(), it.mag.toFloat())
+        }
+        val grid = withContext(Dispatchers.Default) { LiveActivityGenerator.build(events) }
+        view.setLiveActivityGrid(grid)
     }
 
     // Replay: each time the index advances, fly the camera to that quake.
@@ -187,7 +207,7 @@ fun GlobeScreen(
                     // every flyTo() and confuse the time-lapse.
                     autoRotate         = uiState.displaySettings.autoRotate && !replay.isActive,
                     showTectonicPlates = uiState.displaySettings.showTectonicPlates,
-                    showHistoricTrends = uiState.displaySettings.showHistoricTrends,
+                    showSeismicActivity = uiState.displaySettings.showSeismicActivity,
                     showEquator        = uiState.displaySettings.showEquator,
                     showVolcanoes      = uiState.displaySettings.showVolcanoes,
                     showTopography     = uiState.displaySettings.showTopography
@@ -425,6 +445,17 @@ fun GlobeScreen(
                 .align(Alignment.BottomStart)
                 .padding(start = 12.dp, bottom = 40.dp)
         )
+
+        // ── Seismic-activity legend (only shown when the layer is on) ──
+        // Anchored bottom-end so it doesn't fight the magnitude legend.
+        if (uiState.displaySettings.showSeismicActivity) {
+            SeismicActivityLegend(
+                liveEventCount = uiState.earthquakes.size,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = 40.dp)
+            )
+        }
 
         // ── Selected earthquake bottom sheet ─────────────────────────────────
         AnimatedVisibility(
@@ -1169,6 +1200,83 @@ fun MagnitudeBadgeLarge(magnitude: Double) {
             fontSize   = 16.sp
         )
     }
+}
+
+/**
+ * Compact two-ramp legend explaining the Seismic Activity overlay.
+ * Top row: warm ramp = static plate-boundary risk corridors.
+ * Bottom row: cool ramp = real M5+ events from the last 30 days.
+ * Small footer surfaces the live event count so the user knows the cool
+ * layer is being driven by actual data right now.
+ */
+@Composable
+fun SeismicActivityLegend(
+    liveEventCount: Int,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xCC0A1422))
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    ) {
+        Text(
+            text = "SEISMIC ACTIVITY",
+            color = Color(0xFFB8C9DD),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp
+        )
+        Spacer(Modifier.height(6.dp))
+        // Warm baseline row
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RampStripe(
+                stops = listOf(
+                    Color(0xFFFFE54D),
+                    Color(0xFFFF8019),
+                    Color(0xFFFF1A0D)
+                ),
+                width = 56.dp
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "Risk corridors",
+                color = Color(0xFFE9EEF5),
+                fontSize = 11.sp
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        // Cool live row
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RampStripe(
+                stops = listOf(
+                    Color(0xFF2673FF),
+                    Color(0xFF4DE5FF),
+                    Color(0xFFF2FFFF)
+                ),
+                width = 56.dp
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "Last 30d M5+ ($liveEventCount)",
+                color = Color(0xFFE9EEF5),
+                fontSize = 11.sp
+            )
+        }
+    }
+}
+
+/** Tiny horizontal gradient swatch used by [SeismicActivityLegend]. */
+@Composable
+private fun RampStripe(stops: List<Color>, width: androidx.compose.ui.unit.Dp) {
+    val brush = androidx.compose.ui.graphics.Brush.horizontalGradient(stops)
+    Box(
+        modifier = Modifier
+            .width(width)
+            .height(8.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(brush)
+    )
 }
 
 /**

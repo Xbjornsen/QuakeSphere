@@ -18,11 +18,15 @@ data class GlobeDisplaySettings(
      */
     val showTectonicPlates: Boolean = false,
     /**
-     * When true, overlay a historic seismic-density heatmap on the ocean.
-     * Bright yellow→red zones are where significant quakes cluster
-     * geologically. Computed at first run from plate-boundary proximity.
+     * When true, overlay TWO seismic-density layers on the ocean:
+     *   • A warm yellow→red baseline derived from plate-boundary proximity —
+     *     the geological "risk corridors" that are perennially active.
+     *   • A cool blue→cyan→white live layer built from real M5+ events in
+     *     the last 30 days — where activity has *actually* been concentrated.
+     * Together you read baseline plus recent in one glance. See the legend
+     * chip in [com.quakesphere.ui.globe.GlobeScreen] for what each ramp means.
      */
-    val showHistoricTrends: Boolean = false,
+    val showSeismicActivity: Boolean = false,
     /**
      * When true, draw a thin reference circle around the globe at latitude 0
      * — the equator. Helpful for orientation when the globe is tilted.

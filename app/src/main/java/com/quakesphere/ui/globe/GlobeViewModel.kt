@@ -34,7 +34,7 @@ data class GlobeDisplaySettings(
     val showStars:              Boolean = true,
     val autoRotate:             Boolean = false,
     val showTectonicPlates:     Boolean = false,
-    val showHistoricTrends:     Boolean = false,
+    val showSeismicActivity:    Boolean = false,
     val showEquator:            Boolean = false,
     val showVolcanoes:          Boolean = false,
     val showTopography:         Boolean = false,
@@ -92,7 +92,8 @@ class GlobeViewModel @Inject constructor(
         val KEY_SHOW_STARS           = booleanPreferencesKey("show_stars")
         val KEY_AUTO_ROTATE          = booleanPreferencesKey("auto_rotate")
         val KEY_SHOW_TECTONIC_PLATES = booleanPreferencesKey("show_tectonic_plates")
-        val KEY_SHOW_HISTORIC_TRENDS = booleanPreferencesKey("show_historic_trends")
+        // Same DataStore key as before the rename — preserves user toggle state.
+        val KEY_SHOW_SEISMIC_ACTIVITY = booleanPreferencesKey("show_historic_trends")
         val KEY_SHOW_EQUATOR         = booleanPreferencesKey("show_equator")
         val KEY_SHOW_VOLCANOES       = booleanPreferencesKey("show_volcanoes")
         val KEY_SHOW_TOPOGRAPHY      = booleanPreferencesKey("show_topography")
@@ -158,7 +159,7 @@ class GlobeViewModel @Inject constructor(
                             showStars              = prefs[KEY_SHOW_STARS] ?: true,
                             autoRotate             = prefs[KEY_AUTO_ROTATE] ?: false,
                             showTectonicPlates     = prefs[KEY_SHOW_TECTONIC_PLATES] ?: false,
-                            showHistoricTrends     = prefs[KEY_SHOW_HISTORIC_TRENDS] ?: false,
+                            showSeismicActivity    = prefs[KEY_SHOW_SEISMIC_ACTIVITY] ?: false,
                             showEquator            = prefs[KEY_SHOW_EQUATOR] ?: false,
                             showVolcanoes          = prefs[KEY_SHOW_VOLCANOES] ?: false,
                             showTopography         = prefs[KEY_SHOW_TOPOGRAPHY] ?: false,

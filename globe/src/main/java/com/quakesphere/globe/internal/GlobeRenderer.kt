@@ -97,6 +97,17 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     @Volatile private var heatmapPixelsReady: ByteArray? = null
     @Volatile private var heatmapBuildStarted = false
 
+    // ── Live activity overlay ────────────────────────────────────────────────
+    // VM-pushed density grid built from recent earthquakes (last 30d M5+).
+    // Same 720×360 layout as the warm baseline so we reuse the sphere UVs.
+    // Drawn on top of the warm proxy with a cool ramp so users see baseline
+    // risk corridors AND recent activity in one frame.
+    private var liveActivityTextureId = 0
+    @Volatile private var pendingLiveActivityPixels: ByteArray? = null
+    @Volatile private var liveActivityDirty = false
+    /** True once we've ever uploaded a non-empty grid — drives texture re-use. */
+    private var liveActivityHasData = false
+
     /**
      * Elevation grid used by the topographic-relief layer. Computed
      * synchronously on the GL thread during setupGlobe (cheap: ~150ms for
@@ -107,7 +118,10 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
      * smaller mountains form gentle bulges.
      */
     private var elevationGrid: FloatArray? = null
-    private val TOPO_EXAGGERATION = 0.03f
+    // 10% radius extension at maxElev. 3% was perceptually invisible at normal
+    // viewing distance — the user said toggling "does nothing". 10% reads as
+    // clearly bumpy mountains/ocean without warping the silhouette.
+    private val TOPO_EXAGGERATION = 0.10f
 
     @Volatile var lastMvpMatrix: FloatArray = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
 
@@ -136,7 +150,7 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     @Volatile var showStars          = true
     @Volatile var autoRotate         = false
     @Volatile var showTectonicPlates = false
-    @Volatile var showHistoricTrends = false
+    @Volatile var showSeismicActivity = false
     @Volatile var showEquator        = false
     @Volatile var showVolcanoes      = false
     @Volatile var showTopography     = false
@@ -359,6 +373,59 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         }
     """.trimIndent()
 
+    /**
+     * Live-activity vertex shader. Same as the heatmap shader but pushes the
+     * mesh slightly further out (1.007 vs 1.005) so the cool overlay wins the
+     * depth fight over the warm baseline. Reuses sphere UVs.
+     */
+    private val LIVE_ACTIVITY_VERTEX_SHADER = """
+        uniform mat4 uMVPMatrix;
+        attribute vec4 aPosition;
+        attribute vec2 aTexCoord;
+        varying vec2 vTexCoord;
+        void main() {
+            vTexCoord = aTexCoord;
+            gl_Position = uMVPMatrix * vec4(aPosition.xyz * 1.007, 1.0);
+        }
+    """.trimIndent()
+
+    /**
+     * Cool ramp for the live-activity layer: deep blue → cyan → white.
+     * Reads as "recent" against the warm "baseline" ramp at a glance.
+     */
+    private val LIVE_ACTIVITY_FRAGMENT_SHADER = """
+        precision mediump float;
+        uniform sampler2D uLive;
+        varying vec2 vTexCoord;
+        void main() {
+            float v = texture2D(uLive, vTexCoord).r;
+            if (v < 0.05) discard;
+            vec3 c1 = vec3(0.15, 0.45, 1.00);   // low  – royal blue
+            vec3 c2 = vec3(0.30, 0.90, 1.00);   // mid  – cyan
+            vec3 c3 = vec3(0.95, 1.00, 1.00);   // high – near-white
+            vec3 color = v < 0.5
+                ? mix(c1, c2, v * 2.0)
+                : mix(c2, c3, (v - 0.5) * 2.0);
+            float a = 0.28 + v * 0.62;
+            gl_FragColor = vec4(color, a);
+        }
+    """.trimIndent()
+
+    private var liveActivityProgram = 0
+
+    /**
+     * Push a fresh density grid for the live-activity overlay. Called from any
+     * thread; the actual GL upload happens on the next frame inside
+     * [maybeUploadLiveActivity]. Pass `null` to clear the overlay.
+     *
+     * Expected layout: WIDTH × HEIGHT bytes (matches [HeatmapGenerator]), row-
+     * major, top-to-bottom (lat +90→−90), left-to-right (lon −180→+180).
+     */
+    fun setLiveActivityPixels(pixels: ByteArray?) {
+        pendingLiveActivityPixels = pixels
+        liveActivityDirty = true
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // GLSurfaceView.Renderer
     // ════════════════════════════════════════════════════════════════════════
@@ -375,6 +442,7 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         lineProgram   = createProgram(LINE_VERTEX_SHADER,   LINE_FRAGMENT_SHADER)
         fillProgram   = createProgram(FILL_VERTEX_SHADER,   FILL_FRAGMENT_SHADER)
         heatmapProgram = createProgram(HEATMAP_VERTEX_SHADER, HEATMAP_FRAGMENT_SHADER)
+        liveActivityProgram = createProgram(LIVE_ACTIVITY_VERTEX_SHADER, LIVE_ACTIVITY_FRAGMENT_SHADER)
 
         setupGlobe()
         setupStarField()
@@ -451,9 +519,11 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         lastMvpMatrix = mvpMatrix.copyOf()
 
         drawGlobe()
-        if (showHistoricTrends) {
+        if (showSeismicActivity) {
             maybeUploadHeatmap()
-            drawHeatmap()                                       // sit over ocean, under land
+            drawHeatmap()                                       // warm baseline (plate proximity)
+            maybeUploadLiveActivity()
+            if (liveActivityHasData) drawLiveActivity()         // cool live overlay (last 30d M5+)
         }
         drawContinentFills()                                    // filled land before outlines
         if (showContinentLines) drawContinentLines()
@@ -707,6 +777,81 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
      * the sphere mesh's UVs so it stays perfectly aligned with the ocean
      * underneath. Blended additively so it tints rather than replaces.
      */
+    /**
+     * If a fresh grid has been pushed via [setLiveActivityPixels], upload it
+     * to the live-activity texture. Cheap: a single 720×360-byte (~250 KB)
+     * glTexImage2D per refresh.
+     */
+    private fun maybeUploadLiveActivity() {
+        if (!liveActivityDirty) return
+        val pixels = pendingLiveActivityPixels
+        liveActivityDirty = false
+        pendingLiveActivityPixels = null
+
+        if (pixels == null || pixels.isEmpty()) {
+            liveActivityHasData = false
+            return
+        }
+
+        val buf = ByteBuffer.allocateDirect(pixels.size)
+            .order(ByteOrder.nativeOrder())
+            .apply { put(pixels); position(0) }
+
+        if (liveActivityTextureId == 0) {
+            val ids = IntArray(1)
+            GLES20.glGenTextures(1, ids, 0)
+            liveActivityTextureId = ids[0]
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, liveActivityTextureId)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_REPEAT)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        } else {
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, liveActivityTextureId)
+        }
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0,
+            GLES20.GL_LUMINANCE,
+            HeatmapGenerator.WIDTH, HeatmapGenerator.HEIGHT, 0,
+            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, buf
+        )
+        liveActivityHasData = true
+    }
+
+    /** Same geometry path as drawHeatmap, but the cool program + texture. */
+    private fun drawLiveActivity() {
+        if (liveActivityTextureId == 0) return
+        GLES20.glUseProgram(liveActivityProgram)
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        GLES20.glDepthMask(false)
+
+        val mvpH = GLES20.glGetUniformLocation(liveActivityProgram, "uMVPMatrix")
+        val texU = GLES20.glGetUniformLocation(liveActivityProgram, "uLive")
+        val posH = GLES20.glGetAttribLocation(liveActivityProgram,  "aPosition")
+        val texA = GLES20.glGetAttribLocation(liveActivityProgram,  "aTexCoord")
+
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, liveActivityTextureId)
+        GLES20.glUniform1i(texU, 0)
+        GLES20.glUniformMatrix4fv(mvpH, 1, false, mvpMatrix, 0)
+
+        val STRIDE = 32
+        sphereVertexBuffer?.position(0)
+        GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, STRIDE, sphereVertexBuffer)
+        GLES20.glEnableVertexAttribArray(posH)
+        sphereVertexBuffer?.position(6)
+        GLES20.glVertexAttribPointer(texA, 2, GLES20.GL_FLOAT, false, STRIDE, sphereVertexBuffer)
+        GLES20.glEnableVertexAttribArray(texA)
+
+        GLES20.glDrawElements(GLES20.GL_TRIANGLES, sphereIndexCount,
+            GLES20.GL_UNSIGNED_SHORT, sphereIndexBuffer)
+
+        GLES20.glDisableVertexAttribArray(posH)
+        GLES20.glDisableVertexAttribArray(texA)
+        GLES20.glDepthMask(true)
+    }
+
     private fun drawHeatmap() {
         if (heatmapTextureId == 0) return
         GLES20.glUseProgram(heatmapProgram)
@@ -873,7 +1018,11 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
      */
     private val equatorBuffer: java.nio.FloatBuffer by lazy {
         val segments = 180
-        val r = 1.005f
+        // r = 1.012 sits above continent fills (1.0050) AND continent outlines
+        // (1.0075). At 1.005 the equator z-fought the continent fill mesh and
+        // disappeared every time it crossed land — that's the "missing sections"
+        // the user reported.
+        val r = 1.012f
         val verts = FloatArray(segments * 3)
         for (i in 0 until segments) {
             val a = (2.0 * PI * i / segments).toFloat()
