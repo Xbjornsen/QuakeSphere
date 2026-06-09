@@ -49,10 +49,14 @@ it to the system package installer in one tap.
 
 ### Geo overlays
 - **Tectonic plates** — PB2002 (Bird 2003) plate boundaries.
-- **Historic-trends heatmap** — derived at first launch from plate-boundary
-  proximity (Gaussian splat, σ ≈ 4.5°). A deterministic proxy for M5+
-  density that doesn't need any offline data pipeline. Built on a
-  background thread so it never blocks first paint.
+- **Seismic Activity** — a dual-layer heatmap with an explicit corner
+  legend. **Warm layer** (yellow → orange → red) is the static plate-
+  boundary proximity proxy: where significant quakes cluster geologically.
+  **Cool layer** (blue → cyan → white) is computed live from the actual
+  M5+ events you've fetched (last 30 days), so you can see baseline risk
+  corridors and what's *actually* been moving in one frame. Both layers
+  share the same 720×360 grid layout and sphere UVs, so they overlay
+  pixel-perfect.
 - **Active volcanoes** — ~70 globally significant Holocene volcanoes from
   the Smithsonian GVP, rendered as small 3D orange cones with per-face
   shading. Tap for a card with name / country / type / elevation / last
