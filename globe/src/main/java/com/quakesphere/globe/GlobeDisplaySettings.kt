@@ -39,5 +39,14 @@ data class GlobeDisplaySettings(
      * as small white triangle markers. Tap to surface name / range /
      * country / elevation.
      */
-    val showPeaks:          Boolean = false
+    val showPeaks:          Boolean = false,
+    /**
+     * When true, displace the globe sphere and continent fills outward by
+     * a per-vertex elevation derived from the bundled peaks list (Gaussian
+     * splat, max 3% of globe radius at Everest). The Himalayas / Andes /
+     * Rockies bulge visibly off the surface. Continent outlines, plate
+     * boundaries, the heatmap shell and markers still trace the un-displaced
+     * sphere for now — small visual mismatch we'll close in a follow-up.
+     */
+    val showTopography:     Boolean = false
 )

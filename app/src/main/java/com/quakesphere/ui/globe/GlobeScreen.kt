@@ -183,7 +183,8 @@ fun GlobeScreen(
                     showHistoricTrends = uiState.displaySettings.showHistoricTrends,
                     showEquator        = uiState.displaySettings.showEquator,
                     showVolcanoes      = uiState.displaySettings.showVolcanoes,
-                    showPeaks          = uiState.displaySettings.showPeaks
+                    showPeaks          = uiState.displaySettings.showPeaks,
+                    showTopography     = uiState.displaySettings.showTopography
                 )
             },
             modifier = Modifier.fillMaxSize()

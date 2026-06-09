@@ -79,6 +79,7 @@ data class SettingsUiState(
     val showEquator:            Boolean         = false,
     val showVolcanoes:          Boolean         = false,
     val showPeaks:              Boolean         = false,
+    val showTopography:         Boolean         = false,
     val markerColorMode:        MarkerColorMode = MarkerColorMode.DEPTH,
     // Sync
     val syncInterval: SyncInterval = SyncInterval.THIRTY,
@@ -110,6 +111,7 @@ class SettingsViewModel @Inject constructor(
         val KEY_SHOW_EQUATOR         = booleanPreferencesKey("show_equator")
         val KEY_SHOW_VOLCANOES       = booleanPreferencesKey("show_volcanoes")
         val KEY_SHOW_PEAKS           = booleanPreferencesKey("show_peaks")
+        val KEY_SHOW_TOPOGRAPHY      = booleanPreferencesKey("show_topography")
         val KEY_MARKER_COLOR_MODE    = stringPreferencesKey("marker_color_mode")
         val KEY_SYNC_INTERVAL        = intPreferencesKey("sync_interval_minutes")
         val KEY_SWARM_MIN_EVENTS     = intPreferencesKey("swarm_min_events")
@@ -142,6 +144,7 @@ class SettingsViewModel @Inject constructor(
                         showEquator            = p[KEY_SHOW_EQUATOR]         ?: false,
                         showVolcanoes          = p[KEY_SHOW_VOLCANOES]       ?: false,
                         showPeaks              = p[KEY_SHOW_PEAKS]           ?: false,
+                        showTopography         = p[KEY_SHOW_TOPOGRAPHY]      ?: false,
                         markerColorMode        = MarkerColorMode.values().firstOrNull {
                             it.key == (p[KEY_MARKER_COLOR_MODE] ?: "depth")
                         } ?: MarkerColorMode.DEPTH,
@@ -173,6 +176,7 @@ class SettingsViewModel @Inject constructor(
     fun setShowEquator(v: Boolean)         = save { it[KEY_SHOW_EQUATOR] = v }
     fun setShowVolcanoes(v: Boolean)       = save { it[KEY_SHOW_VOLCANOES] = v }
     fun setShowPeaks(v: Boolean)           = save { it[KEY_SHOW_PEAKS] = v }
+    fun setShowTopography(v: Boolean)      = save { it[KEY_SHOW_TOPOGRAPHY] = v }
     fun setMarkerColorMode(v: MarkerColorMode) = save { it[KEY_MARKER_COLOR_MODE] = v.key }
     fun setSyncInterval(v: SyncInterval) {
         save { it[KEY_SYNC_INTERVAL] = v.minutes }

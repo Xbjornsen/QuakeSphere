@@ -63,6 +63,10 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     // ── Globe mesh ───────────────────────────────────────────────────────────
     private var sphereVertexBuffer: FloatBuffer? = null
     private var sphereIndexBuffer: ShortBuffer?  = null
+    // Topography: a second copy of the sphere mesh with each vertex displaced
+    // outward by the elevation grid. Bound instead of the flat mesh when
+    // [showTopography] is on. Built once at startup so toggling is a free swap.
+    private var displacedSphereVertexBuffer: FloatBuffer? = null
     private var sphereIndexCount = 0
 
     // ── Star field ───────────────────────────────────────────────────────────
@@ -76,6 +80,8 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     // ── Continent fills ──────────────────────────────────────────────────────
     private var continentFillBuffer: FloatBuffer? = null
     private var continentFillVertexCount = 0
+    /** Continent fills with elevation-driven displacement applied. */
+    private var displacedContinentFillBuffer: FloatBuffer? = null
 
     // ── Tectonic plates ──────────────────────────────────────────────────────
     private var plateLineBuffer: FloatBuffer? = null
@@ -90,6 +96,18 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     private var heatmapTextureId = 0
     @Volatile private var heatmapPixelsReady: ByteArray? = null
     @Volatile private var heatmapBuildStarted = false
+
+    /**
+     * Elevation grid used by the topographic-relief layer. Computed
+     * synchronously on the GL thread during setupGlobe (cheap: ~150ms for
+     * 720x360 Gaussian-splatting 60 peaks).
+     *
+     * Magnitude of vertex displacement applied at the maximum-elevation
+     * cell. 0.03 = up to 3% of the globe's radius; Everest reads clearly,
+     * smaller mountains form gentle bulges.
+     */
+    private var elevationGrid: FloatArray? = null
+    private val TOPO_EXAGGERATION = 0.03f
 
     @Volatile var lastMvpMatrix: FloatArray = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
 
@@ -125,6 +143,7 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     @Volatile var showEquator        = false
     @Volatile var showVolcanoes      = false
     @Volatile var showPeaks          = false
+    @Volatile var showTopography     = false
 
     // ── Interaction tracking (used to pause auto-rotate after touches) ───────
     @Volatile private var lastInteractionMs = 0L
@@ -472,6 +491,44 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         sphereIndexBuffer = ByteBuffer.allocateDirect(indices.size * 2)
             .order(ByteOrder.nativeOrder()).asShortBuffer()
             .apply { put(indices); position(0) }
+
+        // Compute the elevation grid and a parallel displaced sphere mesh.
+        // Both are cheap (~150ms total) and let topography be a free buffer swap.
+        val grid = ElevationGenerator.build(appContext)
+        elevationGrid = grid
+        val displaced = displaceMesh(vertices, grid, stride = 8, isContinent = false)
+        displacedSphereVertexBuffer = ByteBuffer.allocateDirect(displaced.size * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+            .apply { put(displaced); position(0) }
+    }
+
+    /**
+     * Returns a copy of [vertices] with each vertex's position (the first 3
+     * floats of every [stride]-float chunk) multiplied by (1 + e × EXAG) where
+     * e is sampled from [grid] at that vertex's lat/lon.
+     *
+     * Used to bake the elevation map into static meshes (sphere, continent
+     * fills) so toggling topography is a buffer pointer swap rather than a
+     * shader recompile or per-frame CPU work.
+     */
+    private fun displaceMesh(
+        vertices: FloatArray,
+        grid: FloatArray,
+        stride: Int,
+        isContinent: Boolean
+    ): FloatArray {
+        val out = vertices.copyOf()
+        var i = 0
+        while (i + 3 <= out.size) {
+            val x = out[i]; val y = out[i + 1]; val z = out[i + 2]
+            val e = ElevationGenerator.sample(grid, x, y, z)
+            val scale = 1f + e * TOPO_EXAGGERATION
+            out[i]     = x * scale
+            out[i + 1] = y * scale
+            out[i + 2] = z * scale
+            i += stride
+        }
+        return out
     }
 
     private fun generateSphere(stacks: Int, slices: Int): Pair<FloatArray, ShortArray> {
@@ -534,6 +591,19 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         continentLineBuffer = ByteBuffer.allocateDirect(geometry.lineVertices.size * 4)
             .order(ByteOrder.nativeOrder()).asFloatBuffer()
             .apply { put(geometry.lineVertices); position(0) }
+
+        // Pre-build the topographically-displaced continent fill so it tracks
+        // the sphere mesh exactly. Continent lines and tectonic plates are
+        // intentionally left flat for v1 — they'll trace the un-displaced sphere
+        // until we plumb elevation lookups through their shaders / layouts.
+        elevationGrid?.let { grid ->
+            val displaced = displaceMesh(
+                geometry.fillVertices, grid, stride = 3, isContinent = true
+            )
+            displacedContinentFillBuffer = ByteBuffer.allocateDirect(displaced.size * 4)
+                .order(ByteOrder.nativeOrder()).asFloatBuffer()
+                .apply { put(displaced); position(0) }
+        }
     }
 
     /**
@@ -698,14 +768,19 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         GLES20.glUniform3f(utcSunH, utcSun[0],    utcSun[1],    utcSun[2])
 
         val STRIDE = 32 // 8 floats × 4 bytes
-        sphereVertexBuffer?.position(0)
-        GLES20.glVertexAttribPointer(posH,    3, GLES20.GL_FLOAT, false, STRIDE, sphereVertexBuffer)
+        // Use the displaced sphere mesh when topography is on — same layout
+        // and stride as the flat sphere, just with each position multiplied
+        // by (1 + e × EXAG).
+        val sphereBuf = if (showTopography) displacedSphereVertexBuffer ?: sphereVertexBuffer
+                        else sphereVertexBuffer
+        sphereBuf?.position(0)
+        GLES20.glVertexAttribPointer(posH,    3, GLES20.GL_FLOAT, false, STRIDE, sphereBuf)
         GLES20.glEnableVertexAttribArray(posH)
-        sphereVertexBuffer?.position(3)
-        GLES20.glVertexAttribPointer(normalH, 3, GLES20.GL_FLOAT, false, STRIDE, sphereVertexBuffer)
+        sphereBuf?.position(3)
+        GLES20.glVertexAttribPointer(normalH, 3, GLES20.GL_FLOAT, false, STRIDE, sphereBuf)
         GLES20.glEnableVertexAttribArray(normalH)
-        sphereVertexBuffer?.position(6)
-        GLES20.glVertexAttribPointer(texH,    2, GLES20.GL_FLOAT, false, STRIDE, sphereVertexBuffer)
+        sphereBuf?.position(6)
+        GLES20.glVertexAttribPointer(texH,    2, GLES20.GL_FLOAT, false, STRIDE, sphereBuf)
         GLES20.glEnableVertexAttribArray(texH)
 
         GLES20.glDrawElements(GLES20.GL_TRIANGLES, sphereIndexCount,
@@ -759,7 +834,10 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     }
 
     private fun drawContinentFills() {
-        val buf = continentFillBuffer ?: return
+        // Use the displaced fill mesh when topography is on so the green
+        // continents follow the bumpy ocean shape rather than floating.
+        val buf = (if (showTopography) displacedContinentFillBuffer else continentFillBuffer)
+            ?: return
         GLES20.glUseProgram(fillProgram)
 
         val posH      = GLES20.glGetAttribLocation(fillProgram,  "aPosition")

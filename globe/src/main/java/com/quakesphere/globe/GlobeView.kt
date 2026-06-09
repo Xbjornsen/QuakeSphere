@@ -100,6 +100,7 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
             renderer.showEquator        = value.showEquator
             renderer.showVolcanoes      = value.showVolcanoes
             renderer.showPeaks          = value.showPeaks
+            renderer.showTopography     = value.showTopography
         }
 
     // ── Touch handling ───────────────────────────────────────────────────────

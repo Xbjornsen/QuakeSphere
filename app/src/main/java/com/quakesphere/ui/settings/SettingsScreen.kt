@@ -199,6 +199,13 @@ fun SettingsScreen(
                     onCheckedChange = { viewModel.setShowPeaks(it) }
                 )
                 HorizontalDivider(color = SurfaceVariant)
+                ToggleRow(
+                    title    = "Topographic Relief",
+                    subtitle = "Bump the globe outward where mountains are (Himalayas, Andes, Rockies…)",
+                    checked  = s.showTopography,
+                    onCheckedChange = { viewModel.setShowTopography(it) }
+                )
+                HorizontalDivider(color = SurfaceVariant)
                 Spacer(Modifier.height(4.dp))
                 Text("Marker Colour Mode", color = TextPrimary, fontSize = 15.sp)
                 Text("What property drives dot colour", color = TextSecondary, fontSize = 12.sp)

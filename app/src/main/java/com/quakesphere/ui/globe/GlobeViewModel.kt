@@ -36,6 +36,7 @@ data class GlobeDisplaySettings(
     val showEquator:            Boolean = false,
     val showVolcanoes:          Boolean = false,
     val showPeaks:              Boolean = false,
+    val showTopography:         Boolean = false,
     val markerColorByMagnitude: Boolean = false,
     val useMiles:               Boolean = false
 )
@@ -88,6 +89,7 @@ class GlobeViewModel @Inject constructor(
         val KEY_SHOW_EQUATOR         = booleanPreferencesKey("show_equator")
         val KEY_SHOW_VOLCANOES       = booleanPreferencesKey("show_volcanoes")
         val KEY_SHOW_PEAKS           = booleanPreferencesKey("show_peaks")
+        val KEY_SHOW_TOPOGRAPHY      = booleanPreferencesKey("show_topography")
         val KEY_MARKER_COLOR_MODE    = stringPreferencesKey("marker_color_mode")
         val KEY_SWARM_MIN_EVENTS     = androidx.datastore.preferences.core.intPreferencesKey("swarm_min_events")
         val KEY_TIME_RANGE           = stringPreferencesKey("time_range")
@@ -138,6 +140,7 @@ class GlobeViewModel @Inject constructor(
                             showEquator            = prefs[KEY_SHOW_EQUATOR] ?: false,
                             showVolcanoes          = prefs[KEY_SHOW_VOLCANOES] ?: false,
                             showPeaks              = prefs[KEY_SHOW_PEAKS] ?: false,
+                            showTopography         = prefs[KEY_SHOW_TOPOGRAPHY] ?: false,
                             markerColorByMagnitude = (prefs[KEY_MARKER_COLOR_MODE] ?: "depth") == "magnitude",
                             useMiles               = (prefs[KEY_DISTANCE_UNIT] ?: "km") == "miles"
                         ),
