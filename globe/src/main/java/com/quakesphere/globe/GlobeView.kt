@@ -140,6 +140,13 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
      */
     val volcanoCount: Int
 
+    /**
+     * Public read-only list of bundled Holocene volcanoes (full Volcano data
+     * incl. lastEruption). Available immediately after construction. Consumers
+     * use this for headers like "most recent eruption" pills, list screens, etc.
+     */
+    val volcanoes: List<Volcano>
+
     init {
         setEGLContextClientVersion(2)
         setRenderer(renderer)
@@ -150,9 +157,11 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
         // synchronous parse is well under a frame and lets consumers read
         // the count immediately.
         val entries = com.quakesphere.globe.internal.VolcanoesLoader.load(context)
-        renderer.volcanoes        = entries.map { it.volcano }
+        val list = entries.map { it.volcano }
+        renderer.volcanoes        = list
         renderer.volcanoPositions = entries.map { it.pos }
-        volcanoCount              = entries.size
+        volcanoes                 = list
+        volcanoCount              = list.size
 
         // Forward stack taps from the GL thread up to the main thread, where
         // consumers' Compose / View state lives.

@@ -19,5 +19,12 @@ data class Volcano(
     /** Summit elevation in metres above sea level. Negative for submarine volcanoes. */
     val elevM: Int,
     val lat: Float,
-    val lon: Float
+    val lon: Float,
+    /**
+     * Best-effort year of the most recent eruption (e.g. "2024"). Null when
+     * we don't have a reliable date. Used to surface "most recent eruption"
+     * pills and similar headers; do not rely on these dates for science —
+     * they're hand-curated from common knowledge, not the Smithsonian feed.
+     */
+    val lastEruption: String? = null
 )

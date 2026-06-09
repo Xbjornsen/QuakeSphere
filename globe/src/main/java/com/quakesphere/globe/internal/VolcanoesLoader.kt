@@ -34,7 +34,8 @@ internal object VolcanoesLoader {
                 type    = o.get("type")?.asString ?: "",
                 elevM   = o.get("elevM")?.asInt ?: 0,
                 lat     = lat,
-                lon     = lon
+                lon     = lon,
+                lastEruption = o.get("lastEruption")?.takeIf { !it.isJsonNull }?.asString
             )
             out.add(Entry(volcano, latLonToXYZ(lat, lon, VOLCANO_RADIUS)))
         }

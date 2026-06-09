@@ -44,6 +44,7 @@ data class GlobeUiState(
     val swarms:          List<EarthquakeSwarm> = emptyList(),
     val selectedEarthquake: Earthquake?        = null,
     val selectedSwarmId:    String?            = null,
+    val selectedVolcano:    com.quakesphere.globe.Volcano? = null,
     val isLoading:       Boolean               = false,
     val errorMessage:    String?               = null,
     val minMagnitude:    Double                = 5.0,
@@ -199,6 +200,18 @@ class GlobeViewModel @Inject constructor(
 
     fun selectSwarm(id: String?) {
         _uiState.value = _uiState.value.copy(selectedSwarmId = id)
+    }
+
+    /**
+     * Volcano tap → show the volcano bottom card, and clear any other selection
+     * so we never have two cards stacked. Pass null to dismiss.
+     */
+    fun selectVolcano(volcano: com.quakesphere.globe.Volcano?) {
+        _uiState.value = _uiState.value.copy(
+            selectedVolcano    = volcano,
+            selectedEarthquake = null,
+            selectedSwarmId    = null
+        )
     }
     fun clearError()     { _uiState.value = _uiState.value.copy(errorMessage = null) }
 

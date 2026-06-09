@@ -114,6 +114,9 @@ fun GlobeScreen(
     // Count of bundled active volcanoes — exposed by GlobeView synchronously,
     // captured into Compose state so the header can render "N volcanoes".
     var volcanoCount by remember { mutableStateOf(0) }
+    // Full volcano list (used by the "recent volcano" pill). Captured once
+    // at factory time — the bundled set doesn't change at runtime.
+    var volcanoes by remember { mutableStateOf<List<com.quakesphere.globe.Volcano>>(emptyList()) }
 
     // Replay: each time the index advances, fly the camera to that quake.
     LaunchedEffect(uiState.replay.isActive, uiState.replay.index) {
@@ -133,16 +136,10 @@ fun GlobeScreen(
             factory = { context ->
                 GlobeView(context).apply {
                     volcanoCount = this.volcanoCount   // copy library-side count into Compose state
+                    volcanoes    = this.volcanoes
                     onMarkerClick  = { marker -> viewModel.selectEarthquakeById(marker.id) }
                     onStackClick   = { stack  -> viewModel.selectSwarm(stack.id) }
-                    onVolcanoClick = { v ->
-                        // Phone-friendly toast: name + country + summit elev. Tapping a
-                        // volcano shouldn't fight the earthquake selection UI, so we
-                        // just surface a snackbar — full bottom card can land later
-                        // alongside the USGS live-alerts pass.
-                        val elev = if (v.elevM > 0) " · ${v.elevM} m" else if (v.elevM < 0) " · submarine" else ""
-                        viewModel.showTransientMessage("🌋 ${v.name} (${v.country})$elev")
-                    }
+                    onVolcanoClick = { v -> viewModel.selectVolcano(v) }
                     globeViewRef = this
                 }
             },
@@ -348,6 +345,35 @@ fun GlobeScreen(
                 }
             }
 
+            // ── Most-recent-eruption pill (only when volcanoes are on) ─────
+            // Smaller secondary pill below the quake highlight pill. Tap →
+            // fly to + select volcano card, same pattern as the quake pill.
+            if (uiState.displaySettings.showVolcanoes) {
+                val recentVolcano = remember(volcanoes) {
+                    volcanoes
+                        .filter { !it.lastEruption.isNullOrBlank() }
+                        .maxByOrNull { it.lastEruption!!.toIntOrNull() ?: 0 }
+                }
+                recentVolcano?.let { v ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 2.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        RecentVolcanoPill(
+                            volcano = v,
+                            onClick = {
+                                globeViewRef?.flyTo(
+                                    com.quakesphere.globe.GeoCoord(v.lat.toDouble(), v.lon.toDouble())
+                                )
+                                viewModel.selectVolcano(v)
+                            }
+                        )
+                    }
+                }
+            }
+
             // ── North indicator (stays just under the header pill) ─────────
             Box(
                 modifier = Modifier
@@ -412,6 +438,23 @@ fun GlobeScreen(
                     onEventClick = { id -> viewModel.selectSwarm(null); viewModel.selectEarthquakeById(id) },
                     onDismiss = { viewModel.selectSwarm(null) },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+            }
+        }
+
+        // ── Selected volcano popup ───────────────────────────────────────────
+        AnimatedVisibility(
+            visible = uiState.selectedVolcano != null,
+            enter   = slideInVertically(initialOffsetY = { it }),
+            exit    = slideOutVertically(targetOffsetY = { it }),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            uiState.selectedVolcano?.let { v ->
+                SelectedVolcanoCard(
+                    volcano   = v,
+                    useMiles  = uiState.displaySettings.useMiles,
+                    onDismiss = { viewModel.selectVolcano(null) },
+                    modifier  = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
         }
@@ -760,6 +803,62 @@ fun HighlightQuakePill(
     }
 }
 
+/**
+ * Smaller pill surfaced below the quake highlight when the volcanoes layer is on.
+ * Shows the most-recently-erupted volcano in the bundled set with year + name.
+ */
+@Composable
+fun RecentVolcanoPill(
+    volcano: com.quakesphere.globe.Volcano,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "▲",
+            color = Color(0xFFFF7733),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.width(7.dp))
+        Text(
+            text = "ERUPTED",
+            color = Color(0xFFFFB07A),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.5.sp
+        )
+        Spacer(Modifier.width(7.dp))
+        Text(
+            text = volcano.lastEruption ?: "?",
+            color = Color(0xFFFF7733),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.width(7.dp))
+        Text(
+            text = volcano.name,
+            color = TextPrimary,
+            fontSize = 11.sp,
+            maxLines = 1,
+            modifier = Modifier.widthIn(max = 150.dp)
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text = "· ${volcano.country}",
+            color = TextSecondary,
+            fontSize = 11.sp,
+            maxLines = 1
+        )
+    }
+}
+
 @Composable
 fun PoleLabel(label: String, tint: Color) {
     Box(
@@ -816,6 +915,118 @@ fun LegendItem(color: Color, label: String) {
         Spacer(Modifier.width(6.dp))
         Text(text = label, color = TextPrimary, fontSize = 11.sp)
     }
+}
+
+// ── Selected volcano card ──────────────────────────────────────────────────
+//
+// Same shape and rhythm as SelectedEarthquakeCard so the bottom-sheet
+// behaviour is consistent across earthquake / swarm / volcano taps:
+// orange triangle badge instead of a magnitude circle, a SWARM-style
+// header tag, and two info chips. No "View Full Details" button — we
+// don't have a per-volcano detail screen yet.
+
+@Composable
+fun SelectedVolcanoCard(
+    volcano: com.quakesphere.globe.Volcano,
+    useMiles: Boolean,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier  = modifier.fillMaxWidth(),
+        colors    = CardDefaults.cardColors(containerColor = SurfaceCard),
+        shape     = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(8.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    VolcanoBadgeLarge()
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text          = "VOLCANO",
+                            color         = Color(0xFFFF7733),
+                            fontSize      = 10.sp,
+                            fontWeight    = FontWeight.Bold,
+                            letterSpacing = 1.5.sp
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text       = volcano.name,
+                            color      = TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize   = 15.sp,
+                            maxLines   = 2
+                        )
+                        Text(
+                            text     = volcano.country,
+                            color    = TextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+                Text(
+                    text     = "✕",
+                    color    = TextSecondary,
+                    fontSize = 18.sp,
+                    modifier = Modifier.clickable { onDismiss() }.padding(4.dp)
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                InfoChip(
+                    label = "Elevation",
+                    value = formatElevation(volcano.elevM, useMiles),
+                    color = Color(0xFFFF7733)
+                )
+                volcano.lastEruption?.let { yr ->
+                    InfoChip(label = "Last erupted", value = yr, color = MagStrong)
+                }
+                if (volcano.type.isNotBlank()) {
+                    InfoChip(
+                        label = "Type",
+                        value = volcano.type,
+                        color = ElectricBlue
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Orange ▲ triangle badge — visually rhymes with the on-globe cones. */
+@Composable
+fun VolcanoBadgeLarge() {
+    Box(
+        modifier = Modifier
+            .size(52.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF1F1410)),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text       = "▲",
+            color      = Color(0xFFFF7733),
+            fontWeight = FontWeight.Bold,
+            fontSize   = 26.sp
+        )
+    }
+}
+
+/** Elevation formatter: m or ft, with "submarine" for negatives, "—" for unknown. */
+fun formatElevation(elevM: Int, useMiles: Boolean): String = when {
+    elevM == 0          -> "—"
+    elevM < 0           -> "submarine"
+    useMiles            -> "${(elevM * 3.28084).toInt()} ft"
+    else                -> "$elevM m"
 }
 
 // ── Selected earthquake card ────────────────────────────────────────────────
