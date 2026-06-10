@@ -308,19 +308,15 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
             float diffuse = max(sunDot, 0.0);
             vec3 color = uFillColor.rgb * (0.25 + diffuse * 0.75);
 
-            // ── Snow-cap shading ───────────────────────────────────────────
-            // The continent fill mesh sits at base radius 1.0050. When the
-            // topography toggle is on, each vertex is multiplied by
-            // (1 + e × 0.03) where e ∈ [0,1] is the elevation-grid value, so
-            // the post-displacement length encodes elevation:
-            //     e = (length(vModelPos) / 1.0050 − 1) / 0.03
-            // When topography is OFF, length == 1.0050 exactly → e == 0 →
-            // no snow contribution. No uniform needed to gate it.
-            float elev = clamp((length(vModelPos) / 1.0050 - 1.0) / 0.03, 0.0, 1.0);
-            // Soft snowline: nothing below e=0.35, full snow by e=0.85.
-            float snow = smoothstep(0.35, 0.85, elev);
-            vec3 snowColor = vec3(0.96, 0.98, 1.00);
-            color = mix(color, snowColor, snow);
+            // Snow-cap shading was tried briefly and looked terrible: the
+            // bundled elevation grid uses a wide Gaussian splat (σ=5°) tuned
+            // for smooth landform bulge, so colouring "high cells" white
+            // painted continent-sized blobs across Tibet and the Andes
+            // because the MAX-merge of 14 overlapping 8000er splats saturates
+            // the entire Himalayan crest at e≈1.0 for hundreds of km. Snow
+            // belongs on a future elevation dataset (ETOPO etc.), not on this
+            // coarse position-registry grid. The 3% topographic bulge alone
+            // reads as mountains plenty well at globe scale.
 
             // Real-time UTC night darkening — only deep night gets a subtle dim.
             float utcSunDot = dot(n, normalize(uUtcSunDirModel));
